@@ -1,543 +1,688 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { initializeApp } from 'firebase/app';
-import { 
-  getFirestore, 
-  collection, 
-  addDoc, 
-  query, 
-  onSnapshot, 
-  doc, 
-  deleteDoc, 
-  updateDoc,
-  serverTimestamp 
-} from 'firebase/firestore';
-import { 
-  getAuth, 
-  signInAnonymously, 
-  onAuthStateChanged,
-  signInWithCustomToken
-} from 'firebase/auth';
-import { 
-  LayoutDashboard, 
-  Plus, 
-  Search, 
-  LogOut, 
-  Trash2, 
-  CheckCircle2, 
-  Clock, 
-  ChevronRight, 
-  ChevronLeft,
-  Building2,
-  User,
-  Info,
-  Moon,
-  Sun,
-  Image as ImageIcon,
-  Loader2,
-  Filter,
-  ShieldCheck,
-  Zap
-} from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Search, Plus, Filter, LogOut, Moon, Sun, Trash2, Upload, X, Menu, Info } from 'lucide-react';
 
-// --- Configuration & Initialization ---
-const firebaseConfig = JSON.parse(__firebase_config);
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'granite-core-enterprise';
+// Supabase Configuration - REPLACE THESE WITH YOUR ACTUAL VALUES
+const SUPABASE_URL = 'https://your-project.supabase.co';
+const SUPABASE_ANON_KEY = 'your-anon-key-here';
 
-// --- Reusable Modern Components ---
+// Supabase Client
+class SupabaseClient {
+  constructor(url, key) {
+    this.url = url;
+    this.key = key;
+  }
 
-const Button = ({ children, onClick, variant = 'primary', className = '', disabled = false, icon: Icon, loading = false }) => {
-  const variants = {
-    primary: 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-md active:scale-95',
-    secondary: 'bg-white text-slate-800 border border-slate-200 hover:bg-slate-50',
-    danger: 'bg-red-50 text-red-600 hover:bg-red-100 border border-red-100',
-    accent: 'bg-emerald-600 text-white hover:bg-emerald-700',
-    ghost: 'text-slate-500 hover:bg-slate-100',
-    dark: 'bg-slate-900 text-white hover:bg-black'
-  };
-
-  return (
-    <button 
-      onClick={onClick} 
-      disabled={disabled || loading}
-      className={`px-4 py-2.5 rounded-xl font-semibold transition-all duration-200 flex items-center justify-center gap-2 disabled:opacity-50 ${variants[variant]} ${className}`}
-    >
-      {loading ? <Loader2 size={18} className="animate-spin" /> : Icon && <Icon size={18} />}
-      {children}
-    </button>
-  );
-};
-
-const Card = ({ children, className = "" }) => (
-  <div className={`bg-white border border-slate-200/60 shadow-sm rounded-2xl overflow-hidden ${className}`}>
-    {children}
-  </div>
-);
-
-// --- Main Application ---
-
-export default function App() {
-  const [user, setUser] = useState(null);
-  const [session, setSession] = useState({ company: '', username: '' });
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [records, setRecords] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [isDarkMode, setIsDarkMode] = useState(false);
-  const [activeTab, setActiveTab] = useState('dashboard');
-  
-  const [searchQuery, setSearchQuery] = useState('');
-  const [filterStatus, setFilterStatus] = useState('All');
-  const [isAdding, setIsAdding] = useState(false);
-  const [newRecord, setNewRecord] = useState({ title: '', description: '' });
-  const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 6;
-
-  // 1. Auth Logic (Rule 3)
-  useEffect(() => {
-    const initAuth = async () => {
-      try {
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
-        } else {
-          await signInAnonymously(auth);
-        }
-      } catch (err) {
-        console.error("Auth initialization failed", err);
-      }
-    };
-    initAuth();
+  async query(table, options = {}) {
+    const { select, insert, update, delete: del, match, order, limit, offset } = options;
     
-    const unsubscribe = onAuthStateChanged(auth, (u) => {
-      setUser(u);
-    });
+    let endpoint = `${this.url}/rest/v1/${table}`;
+    let method = 'GET';
+    let body = null;
+    const headers = {
+      'apikey': this.key,
+      'Authorization': `Bearer ${this.key}`,
+      'Content-Type': 'application/json',
+      'Prefer': 'return=representation'
+    };
 
-    const savedSession = localStorage.getItem('granite_session');
-    if (savedSession) {
-      setSession(JSON.parse(savedSession));
-      setIsLoggedIn(true);
+    if (insert) {
+      method = 'POST';
+      body = JSON.stringify(insert);
+    } else if (update) {
+      method = 'PATCH';
+      body = JSON.stringify(update);
+    } else if (del) {
+      method = 'DELETE';
     }
 
-    return () => unsubscribe();
+    let queryParams = [];
+    if (select) queryParams.push(`select=${select}`);
+    if (match) {
+      Object.entries(match).forEach(([key, value]) => {
+        queryParams.push(`${key}=eq.${value}`);
+      });
+    }
+    if (order) queryParams.push(`order=${order}`);
+    if (limit) queryParams.push(`limit=${limit}`);
+    if (offset) queryParams.push(`offset=${offset}`);
+
+    if (queryParams.length > 0) {
+      endpoint += '?' + queryParams.join('&');
+    }
+
+    const response = await fetch(endpoint, { method, headers, body });
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
+    return await response.json();
+  }
+
+  async uploadFile(bucket, path, file) {
+    const response = await fetch(`${this.url}/storage/v1/object/${bucket}/${path}`, {
+      method: 'POST',
+      headers: {
+        'apikey': this.key,
+        'Authorization': `Bearer ${this.key}`,
+        'Content-Type': file.type
+      },
+      body: file
+    });
+
+    if (!response.ok) {
+      throw new Error('Upload failed');
+    }
+
+    return `${this.url}/storage/v1/object/public/${bucket}/${path}`;
+  }
+}
+
+const supabase = new SupabaseClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+export default function GraniteRecordsSystem() {
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [companyName, setCompanyName] = useState('');
+  const [userName, setUserName] = useState('');
+  const [currentUser, setCurrentUser] = useState(null);
+  const [theme, setTheme] = useState('granite');
+  const [showLoginForm, setShowLoginForm] = useState(true);
+  const [records, setRecords] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterStatus, setFilterStatus] = useState('all');
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [showAbout, setShowAbout] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const recordsPerPage = 6;
+
+  const [newRecord, setNewRecord] = useState({
+    title: '',
+    description: '',
+    status: 'pending',
+    image: null
+  });
+
+  useEffect(() => {
+    const savedTheme = localStorage.getItem('theme') || 'granite';
+    setTheme(savedTheme);
+    
+    const savedUser = localStorage.getItem('currentUser');
+    if (savedUser) {
+      const user = JSON.parse(savedUser);
+      setCurrentUser(user);
+      setIsLoggedIn(true);
+      setShowLoginForm(false);
+      fetchRecords(user);
+    }
   }, []);
 
-  // 2. Data Sync (Rule 1 & 2)
   useEffect(() => {
-    if (!user || !isLoggedIn) return;
+    if (isLoggedIn && currentUser) {
+      fetchRecords(currentUser);
+    }
+  }, [searchQuery, filterStatus, currentPage]);
+
+  const handleLogin = async () => {
+    if (!companyName.trim() || !userName.trim()) {
+      alert('Please enter both company name and user name');
+      return;
+    }
 
     setLoading(true);
-    const recordsCol = collection(db, 'artifacts', appId, 'public', 'data', 'records');
-    
-    // Fetch all and filter in memory (Rule 2)
-    const unsubscribe = onSnapshot(recordsCol, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }))
-        .filter(r => r.company === session.company) // Filter by company
-        .sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
-      
-      setRecords(data);
-      setLoading(false);
-    }, (error) => {
-      console.error("Firestore Error:", error);
-      setLoading(false);
-    });
+    const user = {
+      company_name: companyName.trim().toLowerCase(),
+      user_name: userName.trim().toLowerCase()
+    };
 
-    return () => unsubscribe();
-  }, [user, isLoggedIn, session.company]);
-
-  const handleLogin = (e) => {
-    e.preventDefault();
-    if (session.company.trim() && session.username.trim()) {
-      localStorage.setItem('granite_session', JSON.stringify(session));
-      setIsLoggedIn(true);
-    }
+    setCurrentUser(user);
+    localStorage.setItem('currentUser', JSON.stringify(user));
+    setIsLoggedIn(true);
+    setShowLoginForm(false);
+    await fetchRecords(user);
+    setLoading(false);
   };
 
   const handleLogout = () => {
-    localStorage.removeItem('granite_session');
     setIsLoggedIn(false);
-    setSession({ company: '', username: '' });
+    setCurrentUser(null);
+    setRecords([]);
+    setCompanyName('');
+    setUserName('');
+    setShowLoginForm(true);
+    localStorage.removeItem('currentUser');
   };
 
-  const addRecord = async (e) => {
-    e.preventDefault();
-    if (!newRecord.title.trim()) return;
+  const fetchRecords = async (user) => {
+    setLoading(true);
+    try {
+      const offset = (currentPage - 1) * recordsPerPage;
+      let matchCriteria = {
+        company_name: user.company_name,
+        user_name: user.user_name
+      };
+
+      if (filterStatus !== 'all') {
+        matchCriteria.status = filterStatus;
+      }
+
+      const data = await supabase.query('records', {
+        select: '*',
+        match: matchCriteria,
+        order: 'created_at.desc',
+        limit: recordsPerPage,
+        offset: offset
+      });
+
+      let filteredData = data || [];
+      
+      if (searchQuery) {
+        const query = searchQuery.toLowerCase();
+        filteredData = filteredData.filter(record => 
+          record.title.toLowerCase().includes(query) || 
+          record.description.toLowerCase().includes(query)
+        );
+      }
+
+      setRecords(filteredData);
+    } catch (error) {
+      console.error('Error fetching records:', error);
+      alert('Please configure Supabase. See instructions in the code.');
+      setRecords([]);
+    }
+    setLoading(false);
+  };
+
+  const handleAddRecord = async () => {
+    if (!newRecord.title.trim() || !newRecord.description.trim()) {
+      alert('Please fill in all required fields');
+      return;
+    }
 
     setLoading(true);
     try {
-      await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'records'), {
-        title: newRecord.title,
-        description: newRecord.description,
-        status: 'Pending',
-        company: session.company,
-        createdBy: session.username,
-        createdAt: serverTimestamp()
-      });
-      setNewRecord({ title: '', description: '' });
-      setIsAdding(false);
-    } catch (err) {
-      console.error("Error adding record", err);
-    } finally {
-      setLoading(false);
+      let imageUrl = null;
+      
+      if (newRecord.image) {
+        const timestamp = Date.now();
+        const fileName = `${currentUser.company_name}_${currentUser.user_name}_${timestamp}_${newRecord.image.name}`;
+        imageUrl = await supabase.uploadFile('record-images', fileName, newRecord.image);
+      }
+
+      const recordData = {
+        company_name: currentUser.company_name,
+        user_name: currentUser.user_name,
+        title: newRecord.title.trim(),
+        description: newRecord.description.trim(),
+        status: newRecord.status,
+        image_url: imageUrl,
+        created_at: new Date().toISOString()
+      };
+
+      await supabase.query('records', { insert: recordData });
+      
+      setNewRecord({ title: '', description: '', status: 'pending', image: null });
+      setShowAddModal(false);
+      setCurrentPage(1);
+      await fetchRecords(currentUser);
+    } catch (error) {
+      console.error('Error adding record:', error);
+      alert('Failed to add record. Ensure Supabase is configured correctly.');
     }
+    setLoading(false);
   };
 
-  const deleteRecord = async (id) => {
+  const handleDeleteRecord = async (recordId) => {
+    if (!confirm('Are you sure you want to delete this record?')) return;
+
+    setLoading(true);
     try {
-      await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'records', id));
-    } catch (err) {
-      console.error("Delete failed", err);
-    }
-  };
-
-  const updateStatus = async (id, status) => {
-    try {
-      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'records', id), {
-        status: status === 'Pending' ? 'Completed' : 'Pending'
+      await supabase.query('records', {
+        delete: true,
+        match: { id: recordId }
       });
-    } catch (err) {
-      console.error("Update failed", err);
+      await fetchRecords(currentUser);
+    } catch (error) {
+      console.error('Error deleting record:', error);
+      alert('Failed to delete record');
+    }
+    setLoading(false);
+  };
+
+  const handleImageChange = (e) => {
+    if (e.target.files && e.target.files[0]) {
+      setNewRecord({ ...newRecord, image: e.target.files[0] });
     }
   };
 
-  const filteredRecords = useMemo(() => {
-    return records.filter(r => {
-      const matchesSearch = r.title.toLowerCase().includes(searchQuery.toLowerCase());
-      const matchesFilter = filterStatus === 'All' || r.status === filterStatus;
-      return matchesSearch && matchesFilter;
-    });
-  }, [records, searchQuery, filterStatus]);
+  const toggleTheme = () => {
+    const themes = ['granite', 'dark', 'light'];
+    const currentIndex = themes.indexOf(theme);
+    const nextTheme = themes[(currentIndex + 1) % themes.length];
+    setTheme(nextTheme);
+    localStorage.setItem('theme', nextTheme);
+  };
 
-  const paginated = filteredRecords.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
-  const totalPages = Math.ceil(filteredRecords.length / itemsPerPage);
+  const getThemeClasses = () => {
+    switch (theme) {
+      case 'dark':
+        return 'bg-gray-900 text-white';
+      case 'light':
+        return 'bg-gray-50 text-gray-900';
+      default:
+        return 'bg-gradient-to-br from-slate-800 via-gray-800 to-stone-900 text-gray-100';
+    }
+  };
 
-  // --- Auth View ---
-  if (!isLoggedIn) {
+  const getCardClasses = () => {
+    switch (theme) {
+      case 'dark':
+        return 'bg-gray-800 border-gray-700';
+      case 'light':
+        return 'bg-white border-gray-200 shadow-sm';
+      default:
+        return 'bg-gradient-to-br from-slate-700/60 to-stone-800/60 backdrop-blur-sm border-slate-600/40';
+    }
+  };
+
+  const getInputClasses = () => {
+    switch (theme) {
+      case 'light':
+        return 'bg-white border-gray-300 text-gray-900 focus:border-emerald-500';
+      default:
+        return 'bg-slate-900/50 border-slate-600 focus:border-emerald-500';
+    }
+  };
+
+  if (!isLoggedIn && showLoginForm) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6 font-sans">
-        <div className="w-full max-w-[1000px] grid md:grid-cols-2 bg-white rounded-[2.5rem] shadow-2xl overflow-hidden border border-white">
-          <div className="p-12 flex flex-col justify-center">
-            <div className="flex items-center gap-2 mb-8">
-              <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-200">
-                <ShieldCheck className="text-white" size={24} />
-              </div>
-              <span className="text-xl font-bold tracking-tight text-slate-900">GraniteCloud</span>
+      <div className={`min-h-screen flex items-center justify-center p-4 ${getThemeClasses()}`}>
+        <div className={`w-full max-w-md p-8 rounded-2xl border ${getCardClasses()} shadow-2xl`}>
+          <div className="text-center mb-8">
+            <h1 className="text-4xl font-bold mb-2 bg-gradient-to-r from-emerald-400 to-teal-400 bg-clip-text text-transparent">
+              Granite Records
+            </h1>
+            <p className="text-sm opacity-75">Enterprise Record Management System</p>
+          </div>
+          
+          <div className="space-y-6">
+            <div>
+              <label className="block text-sm font-medium mb-2">Company Name</label>
+              <input
+                type="text"
+                value={companyName}
+                onChange={(e) => setCompanyName(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
+                className={`w-full px-4 py-3 rounded-lg border focus:ring-2 focus:ring-emerald-500/20 outline-none transition ${getInputClasses()}`}
+                placeholder="Enter your company name"
+              />
             </div>
-            <h1 className="text-4xl font-extrabold text-slate-900 mb-2 leading-tight">Apna Workspace Set Karein</h1>
-            <p className="text-slate-500 mb-8">Apni company aur team ke liye ek secure cloud environment banayein.</p>
             
-            <form onSubmit={handleLogin} className="space-y-5">
-              <div className="space-y-1">
-                <label className="text-xs font-bold uppercase tracking-wider text-slate-400">Company Name</label>
-                <div className="relative">
-                  <Building2 className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                  <input 
-                    required 
-                    className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all"
-                    placeholder="E.g. Granite Industries"
-                    value={session.company}
-                    onChange={e => setSession({...session, company: e.target.value})}
-                  />
-                </div>
-              </div>
-              <div className="space-y-1">
-                <label className="text-xs font-bold uppercase tracking-wider text-slate-400">Username</label>
-                <div className="relative">
-                  <User className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                  <input 
-                    required 
-                    className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all"
-                    placeholder="Apna naam likhein"
-                    value={session.username}
-                    onChange={e => setSession({...session, username: e.target.value})}
-                  />
-                </div>
-              </div>
-              <Button className="w-full py-5 text-lg shadow-xl shadow-indigo-100" icon={ChevronRight}>Launch Workspace</Button>
-            </form>
+            <div>
+              <label className="block text-sm font-medium mb-2">User Name</label>
+              <input
+                type="text"
+                value={userName}
+                onChange={(e) => setUserName(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
+                className={`w-full px-4 py-3 rounded-lg border focus:ring-2 focus:ring-emerald-500/20 outline-none transition ${getInputClasses()}`}
+                placeholder="Enter your name"
+              />
+            </div>
+            
+            <button
+              onClick={handleLogin}
+              disabled={loading}
+              className="w-full py-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 rounded-lg font-semibold transition shadow-lg disabled:opacity-50"
+            >
+              {loading ? 'Accessing...' : 'Access System'}
+            </button>
           </div>
-          <div className="hidden md:block relative bg-slate-900 p-12 text-white overflow-hidden">
-            <div className="absolute top-[-10%] right-[-10%] w-[60%] h-[60%] bg-indigo-500/20 rounded-full blur-[100px]"></div>
-            <div className="absolute bottom-[-10%] left-[-10%] w-[60%] h-[60%] bg-blue-500/10 rounded-full blur-[100px]"></div>
-            <div className="relative z-10 h-full flex flex-col justify-end">
-              <div className="bg-white/10 backdrop-blur-md p-8 rounded-3xl border border-white/10">
-                <Zap className="text-indigo-400 mb-4" size={32} />
-                <h3 className="text-2xl font-bold mb-2">Enterprise Ready</h3>
-                <p className="text-slate-400">Aapka data encrypted hai aur cloud par hamesha sync rehta hai. Kahin se bhi access karein.</p>
+          
+          <button
+            onClick={() => setShowAbout(true)}
+            className="w-full mt-4 py-2 text-sm text-emerald-400 hover:text-emerald-300 transition"
+          >
+            About / Know More
+          </button>
+        </div>
+
+        {showAbout && (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+            <div className={`w-full max-w-lg p-8 rounded-2xl border ${getCardClasses()} shadow-2xl relative`}>
+              <button
+                onClick={() => setShowAbout(false)}
+                className="absolute top-4 right-4 p-2 hover:bg-slate-700 rounded-lg transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+              
+              <h2 className="text-2xl font-bold mb-6 bg-gradient-to-r from-emerald-400 to-teal-400 bg-clip-text text-transparent">
+                About Us
+              </h2>
+              
+              <div className="space-y-4 text-sm">
+                <div>
+                  <h3 className="font-semibold text-emerald-400 mb-2">Developers</h3>
+                  <p>AMALIN AND ANAY</p>
+                </div>
+                
+                <div>
+                  <h3 className="font-semibold text-emerald-400 mb-2">Contact</h3>
+                  <p>📞 9143036436 / 8334098932</p>
+                </div>
+                
+                <div>
+                  <h3 className="font-semibold text-emerald-400 mb-2">Address</h3>
+                  <p>BIRANDINGI, KONA PURBAPARA K,<br/>
+                  KONA, HOWRAH – 711114<br/>
+                  WEST BENGAL, INDIA</p>
+                </div>
               </div>
             </div>
           </div>
-        </div>
+        )}
       </div>
     );
   }
 
-  // --- Main App View ---
   return (
-    <div className={`min-h-screen font-sans ${isDarkMode ? 'bg-slate-950 text-white' : 'bg-[#F8FAFC] text-slate-900'}`}>
+    <div className={`min-h-screen ${getThemeClasses()} transition-colors duration-300`}>
       {/* Header */}
-      <header className={`sticky top-0 z-40 border-b backdrop-blur-lg ${isDarkMode ? 'bg-slate-950/80 border-slate-800' : 'bg-white/80 border-slate-200/60'}`}>
-        <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
-          <div className="flex items-center gap-8">
-            <div className="flex items-center gap-2">
-              <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center">
-                <ShieldCheck className="text-white" size={24} />
+      <header className={`border-b ${theme === 'light' ? 'border-gray-200 bg-white/80' : 'border-slate-700 bg-slate-900/50'} backdrop-blur-sm sticky top-0 z-40`}>
+        <div className="container mx-auto px-4 py-4">
+          <div className="flex items-center justify-between flex-wrap gap-4">
+            <h1 className="text-2xl font-bold bg-gradient-to-r from-emerald-400 to-teal-400 bg-clip-text text-transparent">
+              Granite Records
+            </h1>
+            
+            <div className="flex items-center gap-3">
+              <div className="hidden sm:block text-sm">
+                <span className="opacity-75">{currentUser?.user_name}</span>
+                <span className="mx-2">•</span>
+                <span className="text-emerald-400">{currentUser?.company_name}</span>
               </div>
-              <span className="text-xl font-black tracking-tight">GRANITE<span className="text-indigo-600">CORE</span></span>
-            </div>
-            <nav className="hidden md:flex items-center gap-6">
-              {['dashboard', 'about'].map(tab => (
-                <button 
-                  key={tab}
-                  onClick={() => setActiveTab(tab)}
-                  className={`text-sm font-bold capitalize transition-all ${activeTab === tab ? 'text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`}
-                >
-                  {tab}
-                </button>
-              ))}
-            </nav>
-          </div>
-
-          <div className="flex items-center gap-4">
-             <button 
-              onClick={() => setIsDarkMode(!isDarkMode)}
-              className="p-2.5 rounded-xl hover:bg-slate-100 transition-colors"
-            >
-              {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
-            </button>
-            <div className="h-8 w-[1px] bg-slate-200"></div>
-            <div className="flex items-center gap-3 bg-slate-100 p-1.5 pr-4 rounded-2xl">
-              <div className="w-8 h-8 rounded-xl bg-indigo-600 flex items-center justify-center text-white font-bold text-xs">
-                {session.username.charAt(0).toUpperCase()}
-              </div>
-              <div className="hidden sm:block">
-                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 leading-none mb-1">{session.company}</p>
-                <p className="text-xs font-bold leading-none">{session.username}</p>
-              </div>
-              <button onClick={handleLogout} className="ml-2 text-slate-400 hover:text-red-500 transition-colors">
-                <LogOut size={16} />
+              
+              <button
+                onClick={toggleTheme}
+                className="p-2 hover:bg-slate-700 rounded-lg transition"
+                title="Toggle theme"
+              >
+                {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+              </button>
+              
+              <button
+                onClick={() => setShowAbout(true)}
+                className="p-2 hover:bg-slate-700 rounded-lg transition"
+                title="About"
+              >
+                <Info className="w-5 h-5" />
+              </button>
+              
+              <button
+                onClick={handleLogout}
+                className="flex items-center gap-2 px-4 py-2 bg-red-600/20 hover:bg-red-600/30 border border-red-600/50 rounded-lg transition"
+              >
+                <LogOut className="w-4 h-4" />
+                <span className="hidden sm:inline">Logout</span>
               </button>
             </div>
           </div>
         </div>
       </header>
 
-      {activeTab === 'dashboard' ? (
-        <main className="max-w-7xl mx-auto px-6 py-10">
-          {/* Welcome Card */}
-          <div className="relative overflow-hidden bg-slate-900 rounded-[2.5rem] p-8 md:p-12 text-white mb-10">
-            <div className="absolute top-[-50%] right-[-10%] w-[50%] h-[150%] bg-indigo-600/20 rotate-12 blur-[120px]"></div>
-            <div className="relative z-10 flex flex-col md:flex-row justify-between items-end md:items-center gap-6">
-              <div>
-                <h1 className="text-4xl md:text-5xl font-black mb-4">Namaste, {session.username}! 👋</h1>
-                <p className="text-slate-400 max-w-lg text-lg">
-                  Aapka <span className="text-white font-bold">{session.company}</span> workspace up-to-date hai. Aaj ka kya plan hai?
-                </p>
-              </div>
-              <Button variant="accent" className="h-16 px-8 rounded-2xl text-lg shadow-2xl shadow-emerald-900/20" icon={Plus} onClick={() => setIsAdding(true)}>
-                New Record Banayein
-              </Button>
-            </div>
-          </div>
-
-          {/* Controls */}
-          <div className="flex flex-col md:flex-row gap-4 mb-8">
+      <main className="container mx-auto px-4 py-8">
+        {/* Controls */}
+        <div className="mb-8 space-y-4">
+          <div className="flex flex-col sm:flex-row gap-4">
             <div className="flex-1 relative">
-              <Search className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
-              <input 
-                placeholder="Record ka naam search karein..."
-                className="w-full pl-14 pr-6 py-4 bg-white border border-slate-200 rounded-2xl shadow-sm focus:ring-4 focus:ring-indigo-500/5 focus:border-indigo-500 outline-none transition-all"
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 opacity-50" />
+              <input
+                type="text"
                 value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search by title or description..."
+                className={`w-full pl-10 pr-4 py-3 rounded-lg border focus:ring-2 focus:ring-emerald-500/20 outline-none transition ${getInputClasses()}`}
               />
             </div>
-            <div className="flex bg-white p-1.5 rounded-2xl border border-slate-200 shadow-sm">
-              {['All', 'Pending', 'Completed'].map(status => (
-                <button
-                  key={status}
-                  onClick={() => {setFilterStatus(status); setCurrentPage(1);}}
-                  className={`px-6 py-2.5 rounded-xl text-sm font-bold transition-all ${filterStatus === status ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-500 hover:bg-slate-50'}`}
-                >
-                  {status}
-                </button>
-              ))}
-            </div>
+            
+            <button
+              onClick={() => setShowAddModal(true)}
+              className="flex items-center justify-center gap-2 px-6 py-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 rounded-lg font-semibold transition shadow-lg whitespace-nowrap"
+            >
+              <Plus className="w-5 h-5" />
+              Add Record
+            </button>
           </div>
+          
+          <div className="flex gap-2 flex-wrap">
+            {['all', 'pending', 'completed'].map((status) => (
+              <button
+                key={status}
+                onClick={() => {
+                  setFilterStatus(status);
+                  setCurrentPage(1);
+                }}
+                className={`px-4 py-2 rounded-lg font-medium transition capitalize ${
+                  filterStatus === status
+                    ? 'bg-emerald-600 text-white'
+                    : theme === 'light'
+                    ? 'bg-gray-200 hover:bg-gray-300 text-gray-900'
+                    : 'bg-slate-700/50 hover:bg-slate-700'
+                }`}
+              >
+                {status}
+              </button>
+            ))}
+          </div>
+        </div>
 
-          {/* Grid */}
-          {loading ? (
-            <div className="flex flex-col items-center justify-center py-20 gap-4">
-              <div className="w-16 h-16 border-4 border-slate-200 border-t-indigo-600 rounded-full animate-spin"></div>
-              <p className="font-bold text-slate-400 uppercase tracking-widest text-xs">Cloud Se Sync Ho Raha Hai...</p>
-            </div>
-          ) : paginated.length > 0 ? (
+        {/* Records Grid */}
+        {loading ? (
+          <div className="flex justify-center py-12">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-emerald-500"></div>
+          </div>
+        ) : records.length === 0 ? (
+          <div className="text-center py-12">
+            <p className="text-lg opacity-75">No records found</p>
+            <p className="text-sm opacity-50 mt-2">Create your first record to get started</p>
+          </div>
+        ) : (
+          <>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {paginated.map(record => (
-                <Card key={record.id} className="group hover:border-indigo-200 hover:shadow-xl transition-all duration-300 flex flex-col">
-                  <div className="p-6 flex-1">
-                    <div className="flex justify-between items-start mb-4">
-                      <div className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-tighter border ${record.status === 'Completed' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-amber-50 text-amber-600 border-amber-100'}`}>
-                        {record.status}
-                      </div>
-                      <button onClick={() => deleteRecord(record.id)} className="text-slate-300 hover:text-red-500 transition-colors p-1">
-                        <Trash2 size={18} />
-                      </button>
-                    </div>
-                    <h3 className="text-xl font-bold mb-2 group-hover:text-indigo-600 transition-colors">{record.title}</h3>
-                    <p className="text-slate-500 text-sm line-clamp-3 mb-4 leading-relaxed">{record.description || 'No description provided.'}</p>
-                  </div>
-                  <div className="px-6 py-4 bg-slate-50/50 border-t border-slate-100 flex items-center justify-between">
-                    <div className="flex items-center gap-2 text-slate-400">
-                      <Clock size={14} />
-                      <span className="text-[10px] font-bold uppercase">{record.createdAt?.toDate().toLocaleDateString() || 'Today'}</span>
-                    </div>
-                    <button 
-                      onClick={() => updateStatus(record.id, record.status)}
-                      className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all ${record.status === 'Completed' ? 'bg-emerald-500 text-white' : 'bg-white border border-slate-200 text-slate-400 hover:border-indigo-500 hover:text-indigo-500'}`}
+              {records.map((record) => (
+                <div
+                  key={record.id}
+                  className={`p-6 rounded-xl border ${getCardClasses()} shadow-lg hover:shadow-xl transition-all duration-300 group`}
+                >
+                  {record.image_url && (
+                    <img
+                      src={record.image_url}
+                      alt={record.title}
+                      className="w-full h-48 object-cover rounded-lg mb-4"
+                    />
+                  )}
+                  
+                  <div className="flex items-start justify-between mb-3">
+                    <h3 className="text-lg font-semibold flex-1 pr-2">{record.title}</h3>
+                    <button
+                      onClick={() => handleDeleteRecord(record.id)}
+                      className="p-2 hover:bg-red-600/20 rounded-lg transition opacity-0 group-hover:opacity-100"
+                      title="Delete record"
                     >
-                      <CheckCircle2 size={20} />
+                      <Trash2 className="w-4 h-4 text-red-400" />
                     </button>
                   </div>
-                </Card>
+                  
+                  <p className="text-sm opacity-75 mb-4 line-clamp-3">{record.description}</p>
+                  
+                  <div className="flex items-center justify-between text-xs">
+                    <span className={`px-3 py-1 rounded-full font-medium ${
+                      record.status === 'completed'
+                        ? 'bg-emerald-600/20 text-emerald-400'
+                        : 'bg-amber-600/20 text-amber-400'
+                    }`}>
+                      {record.status}
+                    </span>
+                    <span className="opacity-50">
+                      {new Date(record.created_at).toLocaleDateString()}
+                    </span>
+                  </div>
+                </div>
               ))}
             </div>
-          ) : (
-            <div className="text-center py-32 bg-white rounded-[2.5rem] border-2 border-dashed border-slate-200">
-              <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-6">
-                <Search size={32} className="text-slate-300" />
-              </div>
-              <h3 className="text-2xl font-bold text-slate-800 mb-2">Koi records nahi mile</h3>
-              <p className="text-slate-400 mb-8">Naya record banane ke liye upar diye gaye button ka use karein.</p>
-              <Button variant="secondary" onClick={() => setIsAdding(true)}>Pehla Record Add Karein</Button>
-            </div>
-          )}
-
-          {/* Pagination */}
-          {totalPages > 1 && (
-            <div className="mt-12 flex justify-center items-center gap-2">
-              <button disabled={currentPage === 1} onClick={() => setCurrentPage(p => p-1)} className="p-3 rounded-xl bg-white border border-slate-200 disabled:opacity-30">
-                <ChevronLeft size={20} />
-              </button>
-              <span className="px-6 py-3 bg-white border border-slate-200 rounded-xl font-bold text-sm">
-                Page {currentPage} of {totalPages}
-              </span>
-              <button disabled={currentPage === totalPages} onClick={() => setCurrentPage(p => p+1)} className="p-3 rounded-xl bg-white border border-slate-200 disabled:opacity-30">
-                <ChevronRight size={20} />
-              </button>
-            </div>
-          )}
-        </main>
-      ) : (
-        <main className="max-w-4xl mx-auto px-6 py-16">
-          <div className="bg-white rounded-[2.5rem] p-12 border border-slate-200 shadow-sm relative overflow-hidden">
-             <div className="absolute top-0 right-0 p-12 opacity-5">
-              <ShieldCheck size={200} />
-            </div>
-            <h1 className="text-5xl font-black mb-10">Koun Hai Hum?</h1>
             
-            <div className="grid md:grid-cols-2 gap-12 relative z-10">
-              <div className="space-y-8">
-                <section>
-                  <label className="text-xs font-black uppercase tracking-widest text-indigo-600 mb-3 block">Mission</label>
-                  <p className="text-slate-600 text-lg leading-relaxed">
-                    Humara maqsad hai enterprise-level record keeping ko itna aasaan banana ki koi bhi company apne digital assets ko bina kisi jhanjhat ke secure kar sake.
-                  </p>
-                </section>
-                <section>
-                  <label className="text-xs font-black uppercase tracking-widest text-indigo-600 mb-4 block">Engineers In Charge</label>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                      <p className="font-black text-slate-900">AMALIN</p>
-                      <p className="text-xs text-slate-400">9143036436</p>
-                    </div>
-                    <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                      <p className="font-black text-slate-900">ANAY</p>
-                      <p className="text-xs text-slate-400">8334098932</p>
-                    </div>
-                  </div>
-                </section>
-              </div>
-
-              <div className="space-y-8">
-                <section>
-                  <label className="text-xs font-black uppercase tracking-widest text-indigo-600 mb-3 block">Office Location</label>
-                  <div className="p-6 bg-slate-900 rounded-3xl text-slate-300">
-                    <p className="font-bold text-white text-lg mb-2">Howrah HQ</p>
-                    <p>BIRANDINGI, KONA PURBAPARA K,</p>
-                    <p>KONA, HOWRAH – 711114</p>
-                    <p>WEST BENGAL, INDIA</p>
-                  </div>
-                </section>
-                <div className="p-6 bg-indigo-50 rounded-3xl border border-indigo-100">
-                  <p className="text-indigo-800 font-bold mb-1">Support Chahiye?</p>
-                  <p className="text-indigo-600 text-sm">Humare engineers se contact karein enterprise solutions ke liye.</p>
-                </div>
-              </div>
+            {/* Pagination */}
+            <div className="flex justify-center gap-2 mt-8">
+              <button
+                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                disabled={currentPage === 1}
+                className={`px-4 py-2 rounded-lg transition disabled:opacity-30 ${
+                  theme === 'light' 
+                    ? 'bg-gray-200 hover:bg-gray-300 text-gray-900' 
+                    : 'bg-slate-700/50 hover:bg-slate-700'
+                }`}
+              >
+                Previous
+              </button>
+              <span className="px-4 py-2">Page {currentPage}</span>
+              <button
+                onClick={() => setCurrentPage(p => p + 1)}
+                disabled={records.length < recordsPerPage}
+                className={`px-4 py-2 rounded-lg transition disabled:opacity-30 ${
+                  theme === 'light' 
+                    ? 'bg-gray-200 hover:bg-gray-300 text-gray-900' 
+                    : 'bg-slate-700/50 hover:bg-slate-700'
+                }`}
+              >
+                Next
+              </button>
             </div>
-          </div>
-        </main>
-      )}
+          </>
+        )}
+      </main>
 
-      {/* Add Modal */}
-      {isAdding && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
-          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-md" onClick={() => !loading && setIsAdding(false)}></div>
-          <div className="relative w-full max-w-xl bg-white rounded-[2.5rem] shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-300">
-            <div className="p-10">
-              <h2 className="text-3xl font-black text-slate-900 mb-2">Naya Record</h2>
-              <p className="text-slate-400 mb-8">Workspace mein naya data entry karein.</p>
+      {/* Add Record Modal */}
+      {showAddModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className={`w-full max-w-2xl p-8 rounded-2xl border ${getCardClasses()} shadow-2xl relative max-h-[90vh] overflow-y-auto`}>
+            <button
+              onClick={() => setShowAddModal(false)}
+              className="absolute top-4 right-4 p-2 hover:bg-slate-700 rounded-lg transition"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            
+            <h2 className="text-2xl font-bold mb-6">Add New Record</h2>
+            
+            <div className="space-y-6">
+              <div>
+                <label className="block text-sm font-medium mb-2">Title *</label>
+                <input
+                  type="text"
+                  value={newRecord.title}
+                  onChange={(e) => setNewRecord({...newRecord, title: e.target.value})}
+                  className={`w-full px-4 py-3 rounded-lg border focus:ring-2 focus:ring-emerald-500/20 outline-none transition ${getInputClasses()}`}
+                  placeholder="Enter record title"
+                />
+              </div>
               
-              <form onSubmit={addRecord} className="space-y-6">
-                <div className="space-y-2">
-                  <label className="text-xs font-black uppercase tracking-widest text-slate-400">Title</label>
-                  <input 
-                    required 
-                    autoFocus
-                    className="w-full px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-indigo-500/5 focus:border-indigo-500 outline-none transition-all"
-                    placeholder="E.g. Monthly Budget Q4"
-                    value={newRecord.title}
-                    onChange={e => setNewRecord({...newRecord, title: e.target.value})}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-xs font-black uppercase tracking-widest text-slate-400">Description</label>
-                  <textarea 
-                    rows={4}
-                    className="w-full px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-indigo-500/5 focus:border-indigo-500 outline-none transition-all resize-none"
-                    placeholder="Details yahan likhein..."
-                    value={newRecord.description}
-                    onChange={e => setNewRecord({...newRecord, description: e.target.value})}
-                  />
-                </div>
-                <div className="flex gap-4 pt-4">
-                  <Button className="flex-1 py-5 text-lg" loading={loading} icon={CheckCircle2}>
-                    Cloud Pe Save Karein
-                  </Button>
-                  <Button variant="secondary" type="button" onClick={() => setIsAdding(false)} disabled={loading}>
-                    Cancel
-                  </Button>
-                </div>
-              </form>
+              <div>
+                <label className="block text-sm font-medium mb-2">Description *</label>
+                <textarea
+                  value={newRecord.description}
+                  onChange={(e) => setNewRecord({...newRecord, description: e.target.value})}
+                  rows="4"
+                  className={`w-full px-4 py-3 rounded-lg border focus:ring-2 focus:ring-emerald-500/20 outline-none transition resize-none ${getInputClasses()}`}
+                  placeholder="Enter description"
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium mb-2">Status</label>
+                <select
+                  value={newRecord.status}
+                  onChange={(e) => setNewRecord({...newRecord, status: e.target.value})}
+                  className={`w-full px-4 py-3 rounded-lg border focus:ring-2 focus:ring-emerald-500/20 outline-none transition ${getInputClasses()}`}
+                >
+                  <option value="pending">Pending</option>
+                  <option value="completed">Completed</option>
+                </select>
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium mb-2">Image</label>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={handleImageChange}
+                  className={`w-full px-4 py-3 rounded-lg border focus:ring-2 focus:ring-emerald-500/20 outline-none transition ${getInputClasses()}`}
+                />
+                {newRecord.image && (
+                  <p className="mt-2 text-sm text-emerald-400">Selected: {newRecord.image.name}</p>
+                )}
+              </div>
+              
+              <div className="flex gap-4">
+                <button
+                  onClick={() => setShowAddModal(false)}
+                  className={`flex-1 py-3 rounded-lg font-semibold transition ${
+                    theme === 'light' 
+                      ? 'bg-gray-200 hover:bg-gray-300 text-gray-900' 
+                      : 'bg-slate-700 hover:bg-slate-600'
+                  }`}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleAddRecord}
+                  disabled={loading}
+                  className="flex-1 py-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 rounded-lg font-semibold transition shadow-lg disabled:opacity-50"
+                >
+                  {loading ? 'Adding...' : 'Add Record'}
+                </button>
+              </div>
             </div>
           </div>
         </div>
       )}
 
-      <footer className="py-12 border-t border-slate-200 mt-20">
-        <div className="max-w-7xl mx-auto px-6 flex flex-col md:flex-row justify-between items-center gap-6">
-          <div className="flex items-center gap-2 grayscale opacity-50">
-            <div className="w-6 h-6 bg-slate-900 rounded-lg flex items-center justify-center">
-              <ShieldCheck className="text-white" size={14} />
+      {/* About Modal */}
+      {showAbout && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className={`w-full max-w-lg p-8 rounded-2xl border ${getCardClasses()} shadow-2xl relative`}>
+            <button
+              onClick={() => setShowAbout(false)}
+              className="absolute top-4 right-4 p-2 hover:bg-slate-700 rounded-lg transition"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            
+            <h2 className="text-2xl font-bold mb-6 bg-gradient-to-r from-emerald-400 to-teal-400 bg-clip-text text-transparent">
+              About Us
+            </h2>
+            
+            <div className="space-y-4 text-sm">
+              <div>
+                <h3 className="font-semibold text-emerald-400 mb-2">Developers</h3>
+                <p>AMALIN AND ANAY</p>
+              </div>
+              
+              <div>
+                <h3 className="font-semibold text-emerald-400 mb-2">Contact</h3>
+                <p>📞 9143036436 / 8334098932</p>
+              </div>
+              
+              <div>
+                <h3 className="font-semibold text-emerald-400 mb-2">Address</h3>
+                <p>BIRANDINGI, KONA PURBAPARA K,<br/>
+                KONA, HOWRAH – 711114<br/>
+                WEST BENGAL, INDIA</p>
+              </div>
             </div>
-            <span className="text-sm font-black tracking-tight">GRANITECORE</span>
-          </div>
-          <p className="text-slate-400 text-xs font-bold uppercase tracking-[0.2em]">&copy; 2024 Enterprise Systems India</p>
-          <div className="flex gap-4">
-            <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
-            <span className="text-[10px] font-black uppercase text-slate-400">Cloud Link Active</span>
           </div>
         </div>
-      </footer>
+      )}
     </div>
   );
 }
