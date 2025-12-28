@@ -14,7 +14,8 @@ import {
 import { 
   getAuth, 
   signInAnonymously, 
-  onAuthStateChanged 
+  onAuthStateChanged,
+  signInWithCustomToken
 } from 'firebase/auth';
 import { 
   LayoutDashboard, 
@@ -33,7 +34,9 @@ import {
   Sun,
   Image as ImageIcon,
   Loader2,
-  Filter
+  Filter,
+  ShieldCheck,
+  Zap
 } from 'lucide-react';
 
 // --- Configuration & Initialization ---
@@ -43,46 +46,35 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'granite-core-enterprise';
 
-// --- Custom Components & Styles ---
+// --- Reusable Modern Components ---
 
-const Button = ({ children, onClick, variant = 'primary', className = '', disabled = false, icon: Icon }) => {
+const Button = ({ children, onClick, variant = 'primary', className = '', disabled = false, icon: Icon, loading = false }) => {
   const variants = {
-    primary: 'bg-slate-800 text-white hover:bg-slate-700 shadow-lg active:scale-95',
+    primary: 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-md active:scale-95',
     secondary: 'bg-white text-slate-800 border border-slate-200 hover:bg-slate-50',
-    danger: 'bg-red-50 text-red-600 hover:bg-red-100',
+    danger: 'bg-red-50 text-red-600 hover:bg-red-100 border border-red-100',
     accent: 'bg-emerald-600 text-white hover:bg-emerald-700',
-    ghost: 'text-slate-500 hover:bg-slate-100'
+    ghost: 'text-slate-500 hover:bg-slate-100',
+    dark: 'bg-slate-900 text-white hover:bg-black'
   };
 
   return (
     <button 
       onClick={onClick} 
-      disabled={disabled}
-      className={`px-4 py-2 rounded-xl font-medium transition-all duration-200 flex items-center justify-center gap-2 disabled:opacity-50 ${variants[variant]} ${className}`}
+      disabled={disabled || loading}
+      className={`px-4 py-2.5 rounded-xl font-semibold transition-all duration-200 flex items-center justify-center gap-2 disabled:opacity-50 ${variants[variant]} ${className}`}
     >
-      {Icon && <Icon size={18} />}
+      {loading ? <Loader2 size={18} className="animate-spin" /> : Icon && <Icon size={18} />}
       {children}
     </button>
   );
 };
 
 const Card = ({ children, className = "" }) => (
-  <div className={`bg-white/80 backdrop-blur-md border border-slate-200 shadow-xl rounded-2xl overflow-hidden ${className}`}>
+  <div className={`bg-white border border-slate-200/60 shadow-sm rounded-2xl overflow-hidden ${className}`}>
     {children}
   </div>
 );
-
-const Badge = ({ status }) => {
-  const styles = status === 'Completed' 
-    ? 'bg-emerald-100 text-emerald-700 border-emerald-200' 
-    : 'bg-amber-100 text-amber-700 border-amber-200';
-  
-  return (
-    <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold border ${styles}`}>
-      {status}
-    </span>
-  );
-};
 
 // --- Main Application ---
 
@@ -93,24 +85,26 @@ export default function App() {
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
   const [isDarkMode, setIsDarkMode] = useState(false);
-  const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard' | 'about'
+  const [activeTab, setActiveTab] = useState('dashboard');
   
-  // Form State
   const [searchQuery, setSearchQuery] = useState('');
   const [filterStatus, setFilterStatus] = useState('All');
   const [isAdding, setIsAdding] = useState(false);
   const [newRecord, setNewRecord] = useState({ title: '', description: '' });
-  const [imageGenerating, setImageGenerating] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 5;
+  const itemsPerPage = 6;
 
-  // 1. Auth & Session Persistence
+  // 1. Auth Logic (Rule 3)
   useEffect(() => {
     const initAuth = async () => {
       try {
-        await signInAnonymously(auth);
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
       } catch (err) {
-        console.error("Auth Error", err);
+        console.error("Auth initialization failed", err);
       }
     };
     initAuth();
@@ -121,24 +115,24 @@ export default function App() {
 
     const savedSession = localStorage.getItem('granite_session');
     if (savedSession) {
-      const parsed = JSON.parse(savedSession);
-      setSession(parsed);
+      setSession(JSON.parse(savedSession));
       setIsLoggedIn(true);
     }
 
     return () => unsubscribe();
   }, []);
 
-  // 2. Data Fetching (Scoped by Company & User)
+  // 2. Data Sync (Rule 1 & 2)
   useEffect(() => {
     if (!user || !isLoggedIn) return;
 
     setLoading(true);
     const recordsCol = collection(db, 'artifacts', appId, 'public', 'data', 'records');
     
+    // Fetch all and filter in memory (Rule 2)
     const unsubscribe = onSnapshot(recordsCol, (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }))
-        .filter(r => r.company === session.company && r.createdBy === session.username)
+        .filter(r => r.company === session.company) // Filter by company
         .sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
       
       setRecords(data);
@@ -149,7 +143,7 @@ export default function App() {
     });
 
     return () => unsubscribe();
-  }, [user, isLoggedIn, session]);
+  }, [user, isLoggedIn, session.company]);
 
   const handleLogin = (e) => {
     e.preventDefault();
@@ -161,28 +155,8 @@ export default function App() {
 
   const handleLogout = () => {
     localStorage.removeItem('granite_session');
-    setSession({ company: '', username: '' });
     setIsLoggedIn(false);
-  };
-
-  const generateRecordImage = async (prompt) => {
-    setImageGenerating(true);
-    try {
-      const apiKey = "";
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key=${apiKey}`, {
-        method: 'POST',
-        body: JSON.stringify({
-          instances: { prompt: `Modern granite style 3D icon for: ${prompt}, professional, slate gray and emerald green colors, studio lighting, high resolution` },
-          parameters: { sampleCount: 1 }
-        })
-      });
-      const result = await response.json();
-      return `data:image/png;base64,${result.predictions[0].bytesBase64Encoded}`;
-    } catch (err) {
-      return "https://images.unsplash.com/photo-1517430816045-df4b7de11d1d?w=400&auto=format&fit=crop&q=60";
-    } finally {
-      setImageGenerating(false);
-    }
+    setSession({ company: '', username: '' });
   };
 
   const addRecord = async (e) => {
@@ -190,14 +164,11 @@ export default function App() {
     if (!newRecord.title.trim()) return;
 
     setLoading(true);
-    const imageUrl = await generateRecordImage(newRecord.title);
-
     try {
       await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'records'), {
         title: newRecord.title,
         description: newRecord.description,
         status: 'Pending',
-        imageUrl,
         company: session.company,
         createdBy: session.username,
         createdAt: serverTimestamp()
@@ -205,197 +176,187 @@ export default function App() {
       setNewRecord({ title: '', description: '' });
       setIsAdding(false);
     } catch (err) {
-      console.error("Add error", err);
+      console.error("Error adding record", err);
     } finally {
       setLoading(false);
     }
   };
 
-  const toggleStatus = async (id, currentStatus) => {
-    const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'records', id);
-    await updateDoc(docRef, {
-      status: currentStatus === 'Pending' ? 'Completed' : 'Pending'
-    });
+  const deleteRecord = async (id) => {
+    try {
+      await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'records', id));
+    } catch (err) {
+      console.error("Delete failed", err);
+    }
   };
 
-  const deleteRecord = async (id) => {
-    const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'records', id);
-    await deleteDoc(docRef);
+  const updateStatus = async (id, status) => {
+    try {
+      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'records', id), {
+        status: status === 'Pending' ? 'Completed' : 'Pending'
+      });
+    } catch (err) {
+      console.error("Update failed", err);
+    }
   };
 
   const filteredRecords = useMemo(() => {
     return records.filter(r => {
-      const matchesSearch = r.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                            r.description.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesSearch = r.title.toLowerCase().includes(searchQuery.toLowerCase());
       const matchesFilter = filterStatus === 'All' || r.status === filterStatus;
       return matchesSearch && matchesFilter;
     });
   }, [records, searchQuery, filterStatus]);
 
-  const paginatedRecords = useMemo(() => {
-    const startIndex = (currentPage - 1) * itemsPerPage;
-    return filteredRecords.slice(startIndex, startIndex + itemsPerPage);
-  }, [filteredRecords, currentPage]);
-
+  const paginated = filteredRecords.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
   const totalPages = Math.ceil(filteredRecords.length / itemsPerPage);
 
+  // --- Auth View ---
   if (!isLoggedIn) {
     return (
-      <div className={`min-h-screen flex items-center justify-center p-6 bg-slate-50 transition-colors duration-500 ${isDarkMode ? 'bg-slate-950' : ''}`}>
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_120%,rgba(16,185,129,0.1),transparent)] pointer-events-none"></div>
-        <Card className="w-full max-w-md p-8 bg-white/90">
-          <div className="flex justify-center mb-6">
-            <div className="w-16 h-16 bg-gradient-to-br from-slate-700 to-slate-900 rounded-2xl flex items-center justify-center shadow-2xl rotate-3">
-              <LayoutDashboard className="text-white" size={32} />
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6 font-sans">
+        <div className="w-full max-w-[1000px] grid md:grid-cols-2 bg-white rounded-[2.5rem] shadow-2xl overflow-hidden border border-white">
+          <div className="p-12 flex flex-col justify-center">
+            <div className="flex items-center gap-2 mb-8">
+              <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-200">
+                <ShieldCheck className="text-white" size={24} />
+              </div>
+              <span className="text-xl font-bold tracking-tight text-slate-900">GraniteCloud</span>
+            </div>
+            <h1 className="text-4xl font-extrabold text-slate-900 mb-2 leading-tight">Apna Workspace Set Karein</h1>
+            <p className="text-slate-500 mb-8">Apni company aur team ke liye ek secure cloud environment banayein.</p>
+            
+            <form onSubmit={handleLogin} className="space-y-5">
+              <div className="space-y-1">
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-400">Company Name</label>
+                <div className="relative">
+                  <Building2 className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                  <input 
+                    required 
+                    className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all"
+                    placeholder="E.g. Granite Industries"
+                    value={session.company}
+                    onChange={e => setSession({...session, company: e.target.value})}
+                  />
+                </div>
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-400">Username</label>
+                <div className="relative">
+                  <User className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                  <input 
+                    required 
+                    className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all"
+                    placeholder="Apna naam likhein"
+                    value={session.username}
+                    onChange={e => setSession({...session, username: e.target.value})}
+                  />
+                </div>
+              </div>
+              <Button className="w-full py-5 text-lg shadow-xl shadow-indigo-100" icon={ChevronRight}>Launch Workspace</Button>
+            </form>
+          </div>
+          <div className="hidden md:block relative bg-slate-900 p-12 text-white overflow-hidden">
+            <div className="absolute top-[-10%] right-[-10%] w-[60%] h-[60%] bg-indigo-500/20 rounded-full blur-[100px]"></div>
+            <div className="absolute bottom-[-10%] left-[-10%] w-[60%] h-[60%] bg-blue-500/10 rounded-full blur-[100px]"></div>
+            <div className="relative z-10 h-full flex flex-col justify-end">
+              <div className="bg-white/10 backdrop-blur-md p-8 rounded-3xl border border-white/10">
+                <Zap className="text-indigo-400 mb-4" size={32} />
+                <h3 className="text-2xl font-bold mb-2">Enterprise Ready</h3>
+                <p className="text-slate-400">Aapka data encrypted hai aur cloud par hamesha sync rehta hai. Kahin se bhi access karein.</p>
+              </div>
             </div>
           </div>
-          <h1 className="text-3xl font-bold text-center text-slate-900 mb-2">GraniteCore</h1>
-          <p className="text-slate-500 text-center mb-8">Enterprise Record Management System</p>
-          
-          <form onSubmit={handleLogin} className="space-y-4">
-            <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-1 flex items-center gap-2">
-                <Building2 size={16} className="text-slate-400" /> Company Name
-              </label>
-              <input 
-                type="text"
-                required
-                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-slate-400 focus:outline-none transition-all"
-                placeholder="e.g. Acme Corp"
-                value={session.company}
-                onChange={(e) => setSession({...session, company: e.target.value})}
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-1 flex items-center gap-2">
-                <User size={16} className="text-slate-400" /> User Name
-              </label>
-              <input 
-                type="text"
-                required
-                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-slate-400 focus:outline-none transition-all"
-                placeholder="e.g. John Doe"
-                value={session.username}
-                onChange={(e) => setSession({...session, username: e.target.value})}
-              />
-            </div>
-            <Button className="w-full py-4 text-lg mt-4" icon={ChevronRight}>
-              Enter Workspace
-            </Button>
-          </form>
-          <div className="mt-8 pt-6 border-t border-slate-100 flex justify-between items-center text-xs text-slate-400">
-            <span>Server: Cloud Global</span>
-            <span>v2.5.0-Stable</span>
-          </div>
-        </Card>
+        </div>
       </div>
     );
   }
 
+  // --- Main App View ---
   return (
-    <div className={`min-h-screen flex flex-col transition-colors duration-500 ${isDarkMode ? 'bg-slate-950 text-slate-200' : 'bg-slate-50 text-slate-900'}`}>
-      <nav className={`sticky top-0 z-50 backdrop-blur-xl border-b transition-colors duration-300 ${isDarkMode ? 'bg-slate-900/80 border-slate-800' : 'bg-white/80 border-slate-200'}`}>
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+    <div className={`min-h-screen font-sans ${isDarkMode ? 'bg-slate-950 text-white' : 'bg-[#F8FAFC] text-slate-900'}`}>
+      {/* Header */}
+      <header className={`sticky top-0 z-40 border-b backdrop-blur-lg ${isDarkMode ? 'bg-slate-950/80 border-slate-800' : 'bg-white/80 border-slate-200/60'}`}>
+        <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
+          <div className="flex items-center gap-8">
+            <div className="flex items-center gap-2">
+              <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center">
+                <ShieldCheck className="text-white" size={24} />
+              </div>
+              <span className="text-xl font-black tracking-tight">GRANITE<span className="text-indigo-600">CORE</span></span>
+            </div>
+            <nav className="hidden md:flex items-center gap-6">
+              {['dashboard', 'about'].map(tab => (
+                <button 
+                  key={tab}
+                  onClick={() => setActiveTab(tab)}
+                  className={`text-sm font-bold capitalize transition-all ${activeTab === tab ? 'text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`}
+                >
+                  {tab}
+                </button>
+              ))}
+            </nav>
+          </div>
+
           <div className="flex items-center gap-4">
-            <div className="w-10 h-10 bg-slate-800 rounded-xl flex items-center justify-center shadow-lg">
-              <LayoutDashboard className="text-white" size={20} />
-            </div>
-            <div>
-              <span className="text-xl font-bold tracking-tight">GraniteCore</span>
-              <div className="text-[10px] uppercase tracking-widest text-emerald-600 font-bold leading-none">Enterprise</div>
-            </div>
-          </div>
-
-          <div className="hidden md:flex items-center gap-6">
-            <button onClick={() => setActiveTab('dashboard')} className={`text-sm font-medium ${activeTab === 'dashboard' ? 'text-slate-900 underline underline-offset-8' : 'text-slate-500 hover:text-slate-700'}`}>Dashboard</button>
-            <button onClick={() => setActiveTab('about')} className={`text-sm font-medium ${activeTab === 'about' ? 'text-slate-900 underline underline-offset-8' : 'text-slate-500 hover:text-slate-700'}`}>About Us</button>
-          </div>
-
-          <div className="flex items-center gap-3">
-            <button 
+             <button 
               onClick={() => setIsDarkMode(!isDarkMode)}
-              className="p-2 rounded-full hover:bg-slate-100 transition-colors"
+              className="p-2.5 rounded-xl hover:bg-slate-100 transition-colors"
             >
               {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
             </button>
-            <div className="h-6 w-[1px] bg-slate-200 mx-2 hidden sm:block"></div>
-            <div className="hidden sm:flex items-center gap-3 mr-4">
-              <div className="text-right">
-                <p className="text-xs font-bold leading-tight">{session.username}</p>
-                <p className="text-[10px] text-slate-500 uppercase">{session.company}</p>
+            <div className="h-8 w-[1px] bg-slate-200"></div>
+            <div className="flex items-center gap-3 bg-slate-100 p-1.5 pr-4 rounded-2xl">
+              <div className="w-8 h-8 rounded-xl bg-indigo-600 flex items-center justify-center text-white font-bold text-xs">
+                {session.username.charAt(0).toUpperCase()}
               </div>
-              <div className="w-8 h-8 rounded-full bg-slate-200 border border-slate-300 flex items-center justify-center font-bold text-slate-600">
-                {session.username.charAt(0)}
+              <div className="hidden sm:block">
+                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 leading-none mb-1">{session.company}</p>
+                <p className="text-xs font-bold leading-none">{session.username}</p>
               </div>
+              <button onClick={handleLogout} className="ml-2 text-slate-400 hover:text-red-500 transition-colors">
+                <LogOut size={16} />
+              </button>
             </div>
-            <Button variant="ghost" onClick={handleLogout} className="p-2">
-              <LogOut size={20} />
-            </Button>
           </div>
         </div>
-      </nav>
+      </header>
 
       {activeTab === 'dashboard' ? (
-        <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-            <Card className="md:col-span-2 p-6 bg-gradient-to-br from-slate-800 to-slate-900 text-white relative overflow-hidden group">
-              <div className="relative z-10">
-                <h2 className="text-3xl font-bold mb-2">Welcome back, {session.username}</h2>
-                <p className="text-slate-400 max-w-md">Your workspace for <span className="text-emerald-400 font-bold">{session.company}</span> is ready. You have {records.length} total records secured in the cloud.</p>
-                <div className="mt-6 flex gap-4">
-                  <Button variant="accent" icon={Plus} onClick={() => setIsAdding(true)}>Create Record</Button>
-                </div>
-              </div>
-              <div className="absolute top-0 right-0 p-8 text-white/10 group-hover:scale-110 transition-transform duration-500">
-                <Building2 size={160} />
-              </div>
-            </Card>
-            
-            <Card className="p-6 flex flex-col justify-between">
+        <main className="max-w-7xl mx-auto px-6 py-10">
+          {/* Welcome Card */}
+          <div className="relative overflow-hidden bg-slate-900 rounded-[2.5rem] p-8 md:p-12 text-white mb-10">
+            <div className="absolute top-[-50%] right-[-10%] w-[50%] h-[150%] bg-indigo-600/20 rotate-12 blur-[120px]"></div>
+            <div className="relative z-10 flex flex-col md:flex-row justify-between items-end md:items-center gap-6">
               <div>
-                <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
-                  <Filter size={18} className="text-slate-400" /> Quick Stats
-                </h3>
-                <div className="space-y-4">
-                  <div className="flex justify-between items-center">
-                    <span className="text-slate-500 text-sm">Completed</span>
-                    <span className="font-bold text-emerald-600">{records.filter(r => r.status === 'Completed').length}</span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-slate-500 text-sm">Pending</span>
-                    <span className="font-bold text-amber-600">{records.filter(r => r.status === 'Pending').length}</span>
-                  </div>
-                </div>
+                <h1 className="text-4xl md:text-5xl font-black mb-4">Namaste, {session.username}! 👋</h1>
+                <p className="text-slate-400 max-w-lg text-lg">
+                  Aapka <span className="text-white font-bold">{session.company}</span> workspace up-to-date hai. Aaj ka kya plan hai?
+                </p>
               </div>
-              <div className="pt-4 border-t border-slate-100 mt-4">
-                <div className="w-full bg-slate-100 rounded-full h-2">
-                  <div 
-                    className="bg-emerald-500 h-2 rounded-full transition-all duration-1000" 
-                    style={{ width: `${records.length > 0 ? (records.filter(r => r.status === 'Completed').length / records.length) * 100 : 0}%` }}
-                  ></div>
-                </div>
-                <p className="text-[10px] mt-2 text-slate-400 uppercase text-center font-bold">Workspace Completion Progress</p>
-              </div>
-            </Card>
+              <Button variant="accent" className="h-16 px-8 rounded-2xl text-lg shadow-2xl shadow-emerald-900/20" icon={Plus} onClick={() => setIsAdding(true)}>
+                New Record Banayein
+              </Button>
+            </div>
           </div>
 
+          {/* Controls */}
           <div className="flex flex-col md:flex-row gap-4 mb-8">
             <div className="flex-1 relative">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
+              <Search className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
               <input 
-                type="text" 
-                placeholder="Search by title or description..."
-                className="w-full pl-12 pr-4 py-3 rounded-xl border border-slate-200 bg-white shadow-sm focus:ring-2 focus:ring-slate-300 focus:outline-none transition-all"
+                placeholder="Record ka naam search karein..."
+                className="w-full pl-14 pr-6 py-4 bg-white border border-slate-200 rounded-2xl shadow-sm focus:ring-4 focus:ring-indigo-500/5 focus:border-indigo-500 outline-none transition-all"
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onChange={e => setSearchQuery(e.target.value)}
               />
             </div>
-            <div className="flex gap-2 overflow-x-auto pb-2 md:pb-0">
-              {['All', 'Pending', 'Completed'].map((status) => (
+            <div className="flex bg-white p-1.5 rounded-2xl border border-slate-200 shadow-sm">
+              {['All', 'Pending', 'Completed'].map(status => (
                 <button
                   key={status}
                   onClick={() => {setFilterStatus(status); setCurrentPage(1);}}
-                  className={`px-5 py-3 rounded-xl font-medium transition-all whitespace-nowrap ${filterStatus === status ? 'bg-slate-800 text-white shadow-md' : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'}`}
+                  className={`px-6 py-2.5 rounded-xl text-sm font-bold transition-all ${filterStatus === status ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-500 hover:bg-slate-50'}`}
                 >
                   {status}
                 </button>
@@ -403,196 +364,180 @@ export default function App() {
             </div>
           </div>
 
-          <div className="space-y-4 min-h-[400px]">
-            {loading ? (
-              <div className="flex flex-col items-center justify-center py-20 gap-4">
-                <Loader2 className="animate-spin text-slate-400" size={40} />
-                <p className="text-slate-400 font-medium">Synchronizing with Cloud...</p>
-              </div>
-            ) : paginatedRecords.length > 0 ? (
-              paginatedRecords.map((record) => (
-                <Card key={record.id} className="group hover:shadow-2xl transition-all duration-300 transform hover:-translate-y-1">
-                  <div className="flex flex-col md:flex-row p-4 gap-6 items-start md:items-center">
-                    <div className="w-24 h-24 flex-shrink-0 bg-slate-100 rounded-xl overflow-hidden border border-slate-200 relative group-hover:rotate-1 transition-transform">
-                      {record.imageUrl ? (
-                        <img src={record.imageUrl} alt={record.title} className="w-full h-full object-cover" />
-                      ) : (
-                        <div className="w-full h-full flex items-center justify-center text-slate-300"><ImageIcon size={32} /></div>
-                      )}
-                    </div>
-                    <div className="flex-1 space-y-2">
-                      <div className="flex items-center gap-3">
-                        <Badge status={record.status} />
-                        <h3 className="text-xl font-bold text-slate-900">{record.title}</h3>
+          {/* Grid */}
+          {loading ? (
+            <div className="flex flex-col items-center justify-center py-20 gap-4">
+              <div className="w-16 h-16 border-4 border-slate-200 border-t-indigo-600 rounded-full animate-spin"></div>
+              <p className="font-bold text-slate-400 uppercase tracking-widest text-xs">Cloud Se Sync Ho Raha Hai...</p>
+            </div>
+          ) : paginated.length > 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {paginated.map(record => (
+                <Card key={record.id} className="group hover:border-indigo-200 hover:shadow-xl transition-all duration-300 flex flex-col">
+                  <div className="p-6 flex-1">
+                    <div className="flex justify-between items-start mb-4">
+                      <div className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-tighter border ${record.status === 'Completed' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-amber-50 text-amber-600 border-amber-100'}`}>
+                        {record.status}
                       </div>
-                      <p className="text-slate-600 text-sm line-clamp-2">{record.description}</p>
-                      <div className="flex items-center gap-4 text-[10px] text-slate-400 uppercase font-bold tracking-wider">
-                        <span className="flex items-center gap-1"><Clock size={12} /> {record.createdAt?.toDate().toLocaleString() || 'Syncing...'}</span>
-                        <span className="flex items-center gap-1"><User size={12} /> {record.createdBy}</span>
-                      </div>
+                      <button onClick={() => deleteRecord(record.id)} className="text-slate-300 hover:text-red-500 transition-colors p-1">
+                        <Trash2 size={18} />
+                      </button>
                     </div>
-                    <div className="flex items-center gap-2 w-full md:w-auto md:border-l pl-0 md:pl-6 border-slate-100">
-                      <Button 
-                        variant={record.status === 'Completed' ? 'ghost' : 'accent'}
-                        className="flex-1 md:flex-none"
-                        onClick={() => toggleStatus(record.id, record.status)}
-                      >
-                        {record.status === 'Completed' ? 'Reopen' : 'Complete'}
-                      </Button>
-                      <Button variant="danger" icon={Trash2} onClick={() => deleteRecord(record.id)} className="p-2"></Button>
+                    <h3 className="text-xl font-bold mb-2 group-hover:text-indigo-600 transition-colors">{record.title}</h3>
+                    <p className="text-slate-500 text-sm line-clamp-3 mb-4 leading-relaxed">{record.description || 'No description provided.'}</p>
+                  </div>
+                  <div className="px-6 py-4 bg-slate-50/50 border-t border-slate-100 flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-slate-400">
+                      <Clock size={14} />
+                      <span className="text-[10px] font-bold uppercase">{record.createdAt?.toDate().toLocaleDateString() || 'Today'}</span>
                     </div>
+                    <button 
+                      onClick={() => updateStatus(record.id, record.status)}
+                      className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all ${record.status === 'Completed' ? 'bg-emerald-500 text-white' : 'bg-white border border-slate-200 text-slate-400 hover:border-indigo-500 hover:text-indigo-500'}`}
+                    >
+                      <CheckCircle2 size={20} />
+                    </button>
                   </div>
                 </Card>
-              ))
-            ) : (
-              <div className="flex flex-col items-center justify-center py-20 bg-slate-100/50 rounded-3xl border-2 border-dashed border-slate-200">
-                <div className="w-20 h-20 bg-slate-200 rounded-full flex items-center justify-center text-slate-400 mb-4">
-                  <LayoutDashboard size={40} />
-                </div>
-                <h3 className="text-xl font-bold text-slate-700">No Records Found</h3>
-                <p className="text-slate-500">Try adjusting your search or add a new record to get started.</p>
+              ))}
+            </div>
+          ) : (
+            <div className="text-center py-32 bg-white rounded-[2.5rem] border-2 border-dashed border-slate-200">
+              <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-6">
+                <Search size={32} className="text-slate-300" />
               </div>
-            )}
-          </div>
+              <h3 className="text-2xl font-bold text-slate-800 mb-2">Koi records nahi mile</h3>
+              <p className="text-slate-400 mb-8">Naya record banane ke liye upar diye gaye button ka use karein.</p>
+              <Button variant="secondary" onClick={() => setIsAdding(true)}>Pehla Record Add Karein</Button>
+            </div>
+          )}
 
+          {/* Pagination */}
           {totalPages > 1 && (
-            <div className="mt-10 flex items-center justify-center gap-4">
-              <Button 
-                variant="secondary" 
-                disabled={currentPage === 1}
-                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-              >
-                <ChevronLeft size={18} />
-              </Button>
-              <div className="flex gap-2">
-                {[...Array(totalPages)].map((_, i) => (
-                  <button
-                    key={i}
-                    onClick={() => setCurrentPage(i + 1)}
-                    className={`w-10 h-10 rounded-lg font-bold transition-all ${currentPage === i + 1 ? 'bg-slate-800 text-white shadow-md' : 'bg-white text-slate-500 border border-slate-200 hover:bg-slate-50'}`}
-                  >
-                    {i + 1}
-                  </button>
-                ))}
-              </div>
-              <Button 
-                variant="secondary" 
-                disabled={currentPage === totalPages}
-                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-              >
-                <ChevronRight size={18} />
-              </Button>
+            <div className="mt-12 flex justify-center items-center gap-2">
+              <button disabled={currentPage === 1} onClick={() => setCurrentPage(p => p-1)} className="p-3 rounded-xl bg-white border border-slate-200 disabled:opacity-30">
+                <ChevronLeft size={20} />
+              </button>
+              <span className="px-6 py-3 bg-white border border-slate-200 rounded-xl font-bold text-sm">
+                Page {currentPage} of {totalPages}
+              </span>
+              <button disabled={currentPage === totalPages} onClick={() => setCurrentPage(p => p+1)} className="p-3 rounded-xl bg-white border border-slate-200 disabled:opacity-30">
+                <ChevronRight size={20} />
+              </button>
             </div>
           )}
         </main>
       ) : (
-        <main className="flex-1 max-w-4xl mx-auto px-4 py-12 w-full">
-          <Card className="p-8 md:p-12">
-            <h1 className="text-4xl font-black text-slate-900 mb-8 border-b pb-4">About GraniteCore</h1>
-            <div className="grid md:grid-cols-2 gap-12">
-              <div className="space-y-6">
+        <main className="max-w-4xl mx-auto px-6 py-16">
+          <div className="bg-white rounded-[2.5rem] p-12 border border-slate-200 shadow-sm relative overflow-hidden">
+             <div className="absolute top-0 right-0 p-12 opacity-5">
+              <ShieldCheck size={200} />
+            </div>
+            <h1 className="text-5xl font-black mb-10">Koun Hai Hum?</h1>
+            
+            <div className="grid md:grid-cols-2 gap-12 relative z-10">
+              <div className="space-y-8">
                 <section>
-                  <h3 className="text-xs font-black uppercase text-emerald-600 tracking-widest mb-2">Our Vision</h3>
-                  <p className="text-slate-600 leading-relaxed">
-                    GraniteCore is built on the principles of reliability and data integrity. In an era of ephemeral data, we provide a solid foundation for enterprise record management that persists across every device and boundary.
+                  <label className="text-xs font-black uppercase tracking-widest text-indigo-600 mb-3 block">Mission</label>
+                  <p className="text-slate-600 text-lg leading-relaxed">
+                    Humara maqsad hai enterprise-level record keeping ko itna aasaan banana ki koi bhi company apne digital assets ko bina kisi jhanjhat ke secure kar sake.
                   </p>
                 </section>
                 <section>
-                  <h3 className="text-xs font-black uppercase text-emerald-600 tracking-widest mb-2">Developed By</h3>
-                  <div className="space-y-2">
-                    <div className="flex justify-between items-center p-3 bg-slate-50 rounded-xl">
-                      <span className="font-bold text-slate-800">AMALIN</span>
-                      <span className="text-slate-500">9143036436</span>
+                  <label className="text-xs font-black uppercase tracking-widest text-indigo-600 mb-4 block">Engineers In Charge</label>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                      <p className="font-black text-slate-900">AMALIN</p>
+                      <p className="text-xs text-slate-400">9143036436</p>
                     </div>
-                    <div className="flex justify-between items-center p-3 bg-slate-50 rounded-xl">
-                      <span className="font-bold text-slate-800">ANAY</span>
-                      <span className="text-slate-500">8334098932</span>
+                    <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                      <p className="font-black text-slate-900">ANAY</p>
+                      <p className="text-xs text-slate-400">8334098932</p>
                     </div>
                   </div>
                 </section>
               </div>
-              <div className="space-y-6">
+
+              <div className="space-y-8">
                 <section>
-                  <h3 className="text-xs font-black uppercase text-emerald-600 tracking-widest mb-2">Headquarters</h3>
-                  <div className="bg-slate-900 text-slate-300 p-6 rounded-2xl shadow-xl">
-                    <p className="font-medium text-white mb-1">BIRANDINGI, KONA PURBAPARA K,</p>
+                  <label className="text-xs font-black uppercase tracking-widest text-indigo-600 mb-3 block">Office Location</label>
+                  <div className="p-6 bg-slate-900 rounded-3xl text-slate-300">
+                    <p className="font-bold text-white text-lg mb-2">Howrah HQ</p>
+                    <p>BIRANDINGI, KONA PURBAPARA K,</p>
                     <p>KONA, HOWRAH – 711114</p>
                     <p>WEST BENGAL, INDIA</p>
                   </div>
                 </section>
-                <section className="p-6 border-2 border-emerald-100 bg-emerald-50 rounded-2xl">
-                  <h3 className="text-emerald-800 font-bold mb-1">Need Enterprise Support?</h3>
-                  <p className="text-emerald-700 text-sm">Contact our engineers for dedicated cloud solutions and on-premise deployments.</p>
-                </section>
+                <div className="p-6 bg-indigo-50 rounded-3xl border border-indigo-100">
+                  <p className="text-indigo-800 font-bold mb-1">Support Chahiye?</p>
+                  <p className="text-indigo-600 text-sm">Humare engineers se contact karein enterprise solutions ke liye.</p>
+                </div>
               </div>
             </div>
-          </Card>
+          </div>
         </main>
       )}
 
-      <footer className={`py-8 px-4 border-t transition-colors ${isDarkMode ? 'bg-slate-950 border-slate-900 text-slate-500' : 'bg-white border-slate-100 text-slate-400'}`}>
-        <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4 text-xs font-medium uppercase tracking-widest">
-          <span>&copy; 2024 GraniteCore Enterprise System</span>
-          <div className="flex gap-6">
-            <span className="text-emerald-600">Secure Cloud Connection Active</span>
-            <span className="hidden md:inline">Latency: 24ms</span>
+      {/* Add Modal */}
+      {isAdding && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
+          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-md" onClick={() => !loading && setIsAdding(false)}></div>
+          <div className="relative w-full max-w-xl bg-white rounded-[2.5rem] shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-300">
+            <div className="p-10">
+              <h2 className="text-3xl font-black text-slate-900 mb-2">Naya Record</h2>
+              <p className="text-slate-400 mb-8">Workspace mein naya data entry karein.</p>
+              
+              <form onSubmit={addRecord} className="space-y-6">
+                <div className="space-y-2">
+                  <label className="text-xs font-black uppercase tracking-widest text-slate-400">Title</label>
+                  <input 
+                    required 
+                    autoFocus
+                    className="w-full px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-indigo-500/5 focus:border-indigo-500 outline-none transition-all"
+                    placeholder="E.g. Monthly Budget Q4"
+                    value={newRecord.title}
+                    onChange={e => setNewRecord({...newRecord, title: e.target.value})}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-black uppercase tracking-widest text-slate-400">Description</label>
+                  <textarea 
+                    rows={4}
+                    className="w-full px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-indigo-500/5 focus:border-indigo-500 outline-none transition-all resize-none"
+                    placeholder="Details yahan likhein..."
+                    value={newRecord.description}
+                    onChange={e => setNewRecord({...newRecord, description: e.target.value})}
+                  />
+                </div>
+                <div className="flex gap-4 pt-4">
+                  <Button className="flex-1 py-5 text-lg" loading={loading} icon={CheckCircle2}>
+                    Cloud Pe Save Karein
+                  </Button>
+                  <Button variant="secondary" type="button" onClick={() => setIsAdding(false)} disabled={loading}>
+                    Cancel
+                  </Button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <footer className="py-12 border-t border-slate-200 mt-20">
+        <div className="max-w-7xl mx-auto px-6 flex flex-col md:flex-row justify-between items-center gap-6">
+          <div className="flex items-center gap-2 grayscale opacity-50">
+            <div className="w-6 h-6 bg-slate-900 rounded-lg flex items-center justify-center">
+              <ShieldCheck className="text-white" size={14} />
+            </div>
+            <span className="text-sm font-black tracking-tight">GRANITECORE</span>
+          </div>
+          <p className="text-slate-400 text-xs font-bold uppercase tracking-[0.2em]">&copy; 2024 Enterprise Systems India</p>
+          <div className="flex gap-4">
+            <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
+            <span className="text-[10px] font-black uppercase text-slate-400">Cloud Link Active</span>
           </div>
         </div>
       </footer>
-
-      {isAdding && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => !loading && setIsAdding(false)}></div>
-          <Card className="w-full max-w-lg p-8 relative animate-in fade-in zoom-in duration-300">
-            <h2 className="text-2xl font-bold mb-6 text-slate-900">New Workspace Record</h2>
-            <form onSubmit={addRecord} className="space-y-4">
-              <div>
-                <label className="block text-sm font-bold text-slate-700 mb-1">Record Title</label>
-                <input 
-                  required
-                  autoFocus
-                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-slate-400 focus:outline-none"
-                  placeholder="Internal audit Q3..."
-                  value={newRecord.title}
-                  onChange={(e) => setNewRecord({...newRecord, title: e.target.value})}
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-bold text-slate-700 mb-1">Detailed Description</label>
-                <textarea 
-                  rows={4}
-                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-slate-400 focus:outline-none resize-none"
-                  placeholder="Provide context for this record..."
-                  value={newRecord.description}
-                  onChange={(e) => setNewRecord({...newRecord, description: e.target.value})}
-                />
-              </div>
-              <div className="pt-4 flex gap-3">
-                <Button 
-                  className="flex-1" 
-                  disabled={loading}
-                  icon={loading ? Loader2 : CheckCircle2}
-                >
-                  {loading ? 'Processing...' : 'Sync to Cloud'}
-                </Button>
-                <Button 
-                  variant="secondary" 
-                  type="button" 
-                  onClick={() => setIsAdding(false)}
-                  disabled={loading}
-                >
-                  Cancel
-                </Button>
-              </div>
-              {imageGenerating && (
-                <p className="text-center text-xs text-slate-400 animate-pulse mt-4 flex items-center justify-center gap-2">
-                  <ImageIcon size={14} /> Generating enterprise-grade visual assets...
-                </p>
-              )}
-            </form>
-          </Card>
-        </div>
-      )}
     </div>
   );
 }
