@@ -1,744 +1,598 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { 
-  Briefcase, 
-  User, 
-  Plus, 
-  Search, 
-  Filter, 
-  Trash2, 
-  Image as ImageIcon, 
-  LogOut, 
-  Loader2, 
-  CheckCircle2, 
-  Clock, 
-  MapPin, 
-  Phone, 
-  Info,
-  ChevronLeft,
-  ChevronRight,
-  Sun,
-  Moon,
-  LayoutGrid,
-  List
-} from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { initializeApp } from 'firebase/app';
-import { 
-  getAuth, 
-  signInAnonymously, 
-  onAuthStateChanged,
-  signInWithCustomToken 
-} from 'firebase/auth';
 import { 
   getFirestore, 
   collection, 
   addDoc, 
   query, 
-  where, 
-  orderBy, 
-  limit, 
   onSnapshot, 
-  deleteDoc, 
   doc, 
-  serverTimestamp,
-  startAfter,
-  getDocs
+  deleteDoc, 
+  updateDoc,
+  serverTimestamp 
 } from 'firebase/firestore';
+import { 
+  getAuth, 
+  signInAnonymously, 
+  onAuthStateChanged 
+} from 'firebase/auth';
+import { 
+  LayoutDashboard, 
+  Plus, 
+  Search, 
+  LogOut, 
+  Trash2, 
+  CheckCircle2, 
+  Clock, 
+  ChevronRight, 
+  ChevronLeft,
+  Building2,
+  User,
+  Info,
+  Moon,
+  Sun,
+  Image as ImageIcon,
+  Loader2,
+  Filter
+} from 'lucide-react';
 
-// --- FIREBASE CONFIGURATION & INIT ---
+// --- Configuration & Initialization ---
 const firebaseConfig = JSON.parse(__firebase_config);
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'granite-core-enterprise';
 
-// --- CONSTANTS & THEME ---
-const COLLECTIONS = {
-  RECORDS: 'records' // Storing in public/data/records filtered by company/user
-};
+// --- Custom Components & Styles ---
 
-const THEMES = {
-  LIGHT: 'light',
-  DARK: 'dark',
-  GRANITE: 'granite'
-};
-
-// --- UTILITY FUNCTIONS ---
-
-// Image Compression to avoid Firestore 1MB limit
-const compressImage = (file) => {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.readAsDataURL(file);
-    reader.onload = (event) => {
-      const img = new Image();
-      img.src = event.target.result;
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        const MAX_WIDTH = 800;
-        const scaleSize = MAX_WIDTH / img.width;
-        canvas.width = MAX_WIDTH;
-        canvas.height = img.height * scaleSize;
-
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        
-        // Compress to JPEG at 0.7 quality
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
-        resolve(dataUrl);
-      };
-      img.onerror = (error) => reject(error);
-    };
-    reader.onerror = (error) => reject(error);
-  });
-};
-
-const formatDate = (timestamp) => {
-  if (!timestamp) return 'Just now';
-  return new Date(timestamp.seconds * 1000).toLocaleString('en-US', {
-    month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit'
-  });
-};
-
-// --- COMPONENTS ---
-
-// 1. LOGIN SCREEN
-const LoginScreen = ({ onLogin }) => {
-  const [company, setCompany] = useState('');
-  const [username, setUsername] = useState('');
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
-
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    if (!company.trim() || !username.trim()) {
-      setError('Both Company Name and User Name are required.');
-      return;
-    }
-    setLoading(true);
-    // Simulate slight network delay for effect
-    setTimeout(() => {
-      onLogin({ 
-        company: company.trim().toLowerCase(), 
-        username: username.trim().toLowerCase(),
-        displayCompany: company,
-        displayUser: username
-      });
-      setLoading(false);
-    }, 800);
+const Button = ({ children, onClick, variant = 'primary', className = '', disabled = false, icon: Icon }) => {
+  const variants = {
+    primary: 'bg-slate-800 text-white hover:bg-slate-700 shadow-lg active:scale-95',
+    secondary: 'bg-white text-slate-800 border border-slate-200 hover:bg-slate-50',
+    danger: 'bg-red-50 text-red-600 hover:bg-red-100',
+    accent: 'bg-emerald-600 text-white hover:bg-emerald-700',
+    ghost: 'text-slate-500 hover:bg-slate-100'
   };
 
   return (
-    <div className="min-h-screen w-full flex items-center justify-center bg-gradient-to-br from-slate-200 via-stone-200 to-slate-300 p-4">
-      <div className="bg-white/80 backdrop-blur-xl border border-white/50 shadow-2xl rounded-2xl p-8 max-w-md w-full relative overflow-hidden">
-        {/* Decorative Elements */}
-        <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-slate-700 via-stone-500 to-emerald-600"></div>
-        
-        <div className="mb-8 text-center">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-slate-800 text-emerald-500 mb-4 shadow-lg">
-            <Briefcase size={32} />
-          </div>
-          <h1 className="text-3xl font-bold text-slate-800 tracking-tight">Granite RMS</h1>
-          <p className="text-slate-500 mt-2 text-sm">Enterprise Cloud Workspace</p>
-        </div>
-
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <div>
-            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Company Workspace</label>
-            <div className="relative">
-              <Briefcase className="absolute left-3 top-3 text-slate-400" size={18} />
-              <input 
-                type="text"
-                value={company}
-                onChange={(e) => setCompany(e.target.value)}
-                className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all text-slate-800 placeholder-slate-400"
-                placeholder="Enter Company Name"
-              />
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">User Identity</label>
-            <div className="relative">
-              <User className="absolute left-3 top-3 text-slate-400" size={18} />
-              <input 
-                type="text"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all text-slate-800 placeholder-slate-400"
-                placeholder="Enter Your Name"
-              />
-            </div>
-          </div>
-
-          {error && (
-            <div className="p-3 bg-red-50 text-red-600 text-sm rounded-lg border border-red-100 flex items-center">
-              <Info size={16} className="mr-2" />
-              {error}
-            </div>
-          )}
-
-          <button 
-            type="submit" 
-            disabled={loading}
-            className="w-full bg-slate-800 hover:bg-slate-900 text-white font-semibold py-3.5 rounded-lg shadow-lg hover:shadow-xl transition-all flex items-center justify-center disabled:opacity-70"
-          >
-            {loading ? <Loader2 className="animate-spin" size={20} /> : 'Access Secure Workspace'}
-          </button>
-        </form>
-
-        <div className="mt-8 pt-6 border-t border-slate-200 text-center">
-          <p className="text-xs text-slate-400">Secure • Encrypted • Global</p>
-        </div>
-      </div>
-    </div>
+    <button 
+      onClick={onClick} 
+      disabled={disabled}
+      className={`px-4 py-2 rounded-xl font-medium transition-all duration-200 flex items-center justify-center gap-2 disabled:opacity-50 ${variants[variant]} ${className}`}
+    >
+      {Icon && <Icon size={18} />}
+      {children}
+    </button>
   );
 };
 
-// 2. ABOUT MODAL
-const AboutModal = ({ onClose }) => (
-  <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
-    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden border border-slate-200">
-      <div className="bg-slate-800 p-6 flex justify-between items-center">
-        <h2 className="text-xl font-bold text-white flex items-center gap-2">
-          <Info size={20} className="text-emerald-400" />
-          About Us
-        </h2>
-        <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors">
-          <LogOut size={20} className="rotate-45" /> {/* Using LogOut as close icon */}
-        </button>
-      </div>
-      <div className="p-8 space-y-6">
-        <div className="space-y-4">
-          <div className="flex items-start gap-4 p-4 bg-slate-50 rounded-xl border border-slate-100">
-            <div className="bg-emerald-100 p-2 rounded-full text-emerald-700 mt-1">
-              <User size={20} />
-            </div>
-            <div>
-              <h3 className="font-bold text-slate-800">Developers</h3>
-              <p className="text-slate-600">AMALIN AND ANAY</p>
-            </div>
-          </div>
-          
-          <div className="flex items-start gap-4 p-4 bg-slate-50 rounded-xl border border-slate-100">
-            <div className="bg-emerald-100 p-2 rounded-full text-emerald-700 mt-1">
-              <Phone size={20} />
-            </div>
-            <div>
-              <h3 className="font-bold text-slate-800">Contact</h3>
-              <p className="text-slate-600">9143036436 / 8334098932</p>
-            </div>
-          </div>
-
-          <div className="flex items-start gap-4 p-4 bg-slate-50 rounded-xl border border-slate-100">
-            <div className="bg-emerald-100 p-2 rounded-full text-emerald-700 mt-1">
-              <MapPin size={20} />
-            </div>
-            <div>
-              <h3 className="font-bold text-slate-800">Address</h3>
-              <p className="text-slate-600 text-sm leading-relaxed">
-                BIRANDINGI, KONA PURBAPARA K,<br/>
-                KONA, HOWRAH – 711114<br/>
-                WEST BENGAL, INDIA
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
-      <div className="bg-slate-50 p-4 border-t border-slate-100 text-center">
-        <button onClick={onClose} className="text-slate-500 hover:text-slate-800 text-sm font-medium">Close Window</button>
-      </div>
-    </div>
+const Card = ({ children, className = "" }) => (
+  <div className={`bg-white/80 backdrop-blur-md border border-slate-200 shadow-xl rounded-2xl overflow-hidden ${className}`}>
+    {children}
   </div>
 );
 
-// 3. ADD RECORD MODAL
-const AddRecordModal = ({ onClose, onAdd, loading }) => {
-  const [title, setTitle] = useState('');
-  const [desc, setDesc] = useState('');
-  const [status, setStatus] = useState('Pending');
-  const [image, setImage] = useState(null);
-  const [imagePreview, setImagePreview] = useState(null);
-  const fileInputRef = useRef(null);
-
-  const handleImageChange = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      if (file.size > 5 * 1024 * 1024) {
-        alert("File too large. Please select an image under 5MB.");
-        return;
-      }
-      setImage(file);
-      const reader = new FileReader();
-      reader.onloadend = () => setImagePreview(reader.result);
-      reader.readAsDataURL(file);
-    }
-  };
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (!title || !desc) return;
-    onAdd({ title, desc, status, image });
-  };
-
+const Badge = ({ status }) => {
+  const styles = status === 'Completed' 
+    ? 'bg-emerald-100 text-emerald-700 border-emerald-200' 
+    : 'bg-amber-100 text-amber-700 border-amber-200';
+  
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden border border-slate-200 flex flex-col max-h-[90vh]">
-        <div className="bg-slate-800 p-6 flex justify-between items-center shrink-0">
-          <h2 className="text-lg font-bold text-white">Add New Record</h2>
-          <button onClick={onClose} className="text-slate-400 hover:text-white"><LogOut size={20} className="rotate-45"/></button>
-        </div>
-        
-        <form onSubmit={handleSubmit} className="p-6 space-y-4 overflow-y-auto">
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Title</label>
-            <input 
-              required
-              type="text" 
-              value={title}
-              onChange={e => setTitle(e.target.value)}
-              className="w-full p-3 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-              placeholder="Project or Task Name"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Description</label>
-            <textarea 
-              required
-              rows={3}
-              value={desc}
-              onChange={e => setDesc(e.target.value)}
-              className="w-full p-3 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:outline-none resize-none"
-              placeholder="Detailed description..."
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Status</label>
-            <div className="flex gap-2">
-              {['Pending', 'Completed'].map(s => (
-                <button
-                  key={s}
-                  type="button"
-                  onClick={() => setStatus(s)}
-                  className={`flex-1 py-2 rounded-lg text-sm font-medium transition-all ${
-                    status === s 
-                      ? s === 'Completed' ? 'bg-emerald-600 text-white' : 'bg-amber-500 text-white'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                  }`}
-                >
-                  {s}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Attachment</label>
-            <div 
-              onClick={() => fileInputRef.current?.click()}
-              className="border-2 border-dashed border-slate-300 rounded-xl p-6 text-center cursor-pointer hover:border-emerald-500 hover:bg-emerald-50 transition-all group"
-            >
-              {imagePreview ? (
-                <div className="relative">
-                  <img src={imagePreview} alt="Preview" className="max-h-40 mx-auto rounded-lg shadow-sm" />
-                  <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity rounded-lg text-white font-medium">Change Image</div>
-                </div>
-              ) : (
-                <div className="text-slate-500 group-hover:text-emerald-600">
-                  <ImageIcon className="mx-auto mb-2" size={24} />
-                  <span className="text-sm">Click to upload image</span>
-                </div>
-              )}
-              <input 
-                type="file" 
-                ref={fileInputRef} 
-                className="hidden" 
-                accept="image/*" 
-                onChange={handleImageChange}
-              />
-            </div>
-          </div>
-        </form>
-
-        <div className="p-4 border-t border-slate-100 bg-slate-50 shrink-0">
-          <button 
-            onClick={handleSubmit}
-            disabled={loading}
-            className="w-full bg-slate-800 hover:bg-slate-900 text-white font-bold py-3 rounded-xl shadow-lg hover:shadow-xl transition-all flex items-center justify-center gap-2"
-          >
-            {loading ? <Loader2 className="animate-spin" /> : <><Plus size={20} /> Create Record</>}
-          </button>
-        </div>
-      </div>
-    </div>
+    <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold border ${styles}`}>
+      {status}
+    </span>
   );
 };
 
-// 4. MAIN APP LOGIC
-export default function App() {
-  // State
-  const [credentials, setCredentials] = useState(null);
-  const [records, setRecords] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [filterStatus, setFilterStatus] = useState('All');
-  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-  const [isAboutModalOpen, setIsAboutModalOpen] = useState(false);
-  const [theme, setTheme] = useState('granite');
-  const [firebaseUser, setFirebaseUser] = useState(null);
-  const [submitting, setSubmitting] = useState(false);
+// --- Main Application ---
 
-  // Initialize Auth
+export default function App() {
+  const [user, setUser] = useState(null);
+  const [session, setSession] = useState({ company: '', username: '' });
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [records, setRecords] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [isDarkMode, setIsDarkMode] = useState(false);
+  const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard' | 'about'
+  
+  // Form State
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterStatus, setFilterStatus] = useState('All');
+  const [isAdding, setIsAdding] = useState(false);
+  const [newRecord, setNewRecord] = useState({ title: '', description: '' });
+  const [imageGenerating, setImageGenerating] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 5;
+
+  // 1. Auth & Session Persistence
   useEffect(() => {
     const initAuth = async () => {
-      // Check environment provided token first
-      if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-        try {
-          await signInWithCustomToken(auth, __initial_auth_token);
-        } catch (e) {
-          console.error("Custom token fail, fallback anon", e);
-          await signInAnonymously(auth);
-        }
-      } else {
+      try {
         await signInAnonymously(auth);
+      } catch (err) {
+        console.error("Auth Error", err);
       }
     };
     initAuth();
     
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      setFirebaseUser(user);
+    const unsubscribe = onAuthStateChanged(auth, (u) => {
+      setUser(u);
     });
-    
-    // Load persisted credentials
-    const savedCreds = localStorage.getItem('granite_creds');
-    if (savedCreds) {
-      setCredentials(JSON.parse(savedCreds));
+
+    const savedSession = localStorage.getItem('granite_session');
+    if (savedSession) {
+      const parsed = JSON.parse(savedSession);
+      setSession(parsed);
+      setIsLoggedIn(true);
     }
 
     return () => unsubscribe();
   }, []);
 
-  // Fetch Records
+  // 2. Data Fetching (Scoped by Company & User)
   useEffect(() => {
-    if (!credentials || !firebaseUser) return;
+    if (!user || !isLoggedIn) return;
 
     setLoading(true);
-    // Note: We use the public collection but filter by the composite key of company+user
-    // This allows the "Global Access" requirement (login from anywhere with same credentials)
-    const recordsRef = collection(db, 'artifacts', appId, 'public', 'data', COLLECTIONS.RECORDS);
+    const recordsCol = collection(db, 'artifacts', appId, 'public', 'data', 'records');
     
-    // In a real production app with massive data, we would need composite indexes.
-    // For this implementation without console access to create indexes, we fetch by company/user
-    // and sort client side if needed, or rely on simple ordering.
-    // We try to stick to Rule 2: No complex queries without indexes.
-    const q = query(
-      recordsRef,
-      where('companyId', '==', credentials.company),
-      where('userId', '==', credentials.username)
-      // orderBy('createdAt', 'desc') // Removed to prevent "Index required" error in preview
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const fetched = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-      // Client-side sort to avoid index errors
-      fetched.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
-      setRecords(fetched);
+    const unsubscribe = onSnapshot(recordsCol, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }))
+        .filter(r => r.company === session.company && r.createdBy === session.username)
+        .sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+      
+      setRecords(data);
       setLoading(false);
     }, (error) => {
-      console.error("Data fetch error:", error);
+      console.error("Firestore Error:", error);
       setLoading(false);
     });
 
     return () => unsubscribe();
-  }, [credentials, firebaseUser]);
+  }, [user, isLoggedIn, session]);
 
-  // Actions
-  const handleLogin = (creds) => {
-    setCredentials(creds);
-    localStorage.setItem('granite_creds', JSON.stringify(creds));
+  const handleLogin = (e) => {
+    e.preventDefault();
+    if (session.company.trim() && session.username.trim()) {
+      localStorage.setItem('granite_session', JSON.stringify(session));
+      setIsLoggedIn(true);
+    }
   };
 
   const handleLogout = () => {
-    setCredentials(null);
-    localStorage.removeItem('granite_creds');
-    setRecords([]);
+    localStorage.removeItem('granite_session');
+    setSession({ company: '', username: '' });
+    setIsLoggedIn(false);
   };
 
-  const handleAddRecord = async ({ title, desc, status, image }) => {
-    if (!firebaseUser || !credentials) return;
-    setSubmitting(true);
+  const generateRecordImage = async (prompt) => {
+    setImageGenerating(true);
+    try {
+      const apiKey = "";
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key=${apiKey}`, {
+        method: 'POST',
+        body: JSON.stringify({
+          instances: { prompt: `Modern granite style 3D icon for: ${prompt}, professional, slate gray and emerald green colors, studio lighting, high resolution` },
+          parameters: { sampleCount: 1 }
+        })
+      });
+      const result = await response.json();
+      return `data:image/png;base64,${result.predictions[0].bytesBase64Encoded}`;
+    } catch (err) {
+      return "https://images.unsplash.com/photo-1517430816045-df4b7de11d1d?w=400&auto=format&fit=crop&q=60";
+    } finally {
+      setImageGenerating(false);
+    }
+  };
+
+  const addRecord = async (e) => {
+    e.preventDefault();
+    if (!newRecord.title.trim()) return;
+
+    setLoading(true);
+    const imageUrl = await generateRecordImage(newRecord.title);
 
     try {
-      let imageData = null;
-      if (image) {
-        imageData = await compressImage(image);
-      }
-
-      const recordsRef = collection(db, 'artifacts', appId, 'public', 'data', COLLECTIONS.RECORDS);
-      await addDoc(recordsRef, {
-        companyId: credentials.company,
-        userId: credentials.username,
-        title,
-        description: desc,
-        status,
-        imageUrl: imageData, // Storing base64 directly as "Cloud Storage"
+      await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'records'), {
+        title: newRecord.title,
+        description: newRecord.description,
+        status: 'Pending',
+        imageUrl,
+        company: session.company,
+        createdBy: session.username,
         createdAt: serverTimestamp()
       });
-      setIsAddModalOpen(false);
-    } catch (error) {
-      console.error("Error adding:", error);
-      alert("Failed to save record. Please try again.");
+      setNewRecord({ title: '', description: '' });
+      setIsAdding(false);
+    } catch (err) {
+      console.error("Add error", err);
     } finally {
-      setSubmitting(false);
+      setLoading(false);
     }
   };
 
-  const handleDelete = async (id) => {
-    if (!window.confirm("Are you sure you want to delete this record? This action is permanent.")) return;
-    try {
-      const docRef = doc(db, 'artifacts', appId, 'public', 'data', COLLECTIONS.RECORDS, id);
-      await deleteDoc(docRef);
-    } catch (error) {
-      console.error("Delete failed", error);
-    }
-  };
-
-  // Filter Logic
-  const filteredRecords = useMemo(() => {
-    return records.filter(record => {
-      const matchesSearch = 
-        record.title?.toLowerCase().includes(searchTerm.toLowerCase()) || 
-        record.description?.toLowerCase().includes(searchTerm.toLowerCase());
-      const matchesStatus = filterStatus === 'All' || record.status === filterStatus;
-      return matchesSearch && matchesStatus;
+  const toggleStatus = async (id, currentStatus) => {
+    const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'records', id);
+    await updateDoc(docRef, {
+      status: currentStatus === 'Pending' ? 'Completed' : 'Pending'
     });
-  }, [records, searchTerm, filterStatus]);
+  };
 
-  // Render Login if not authenticated
-  if (!credentials) {
-    return <LoginScreen onLogin={handleLogin} />;
+  const deleteRecord = async (id) => {
+    const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'records', id);
+    await deleteDoc(docRef);
+  };
+
+  const filteredRecords = useMemo(() => {
+    return records.filter(r => {
+      const matchesSearch = r.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                            r.description.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesFilter = filterStatus === 'All' || r.status === filterStatus;
+      return matchesSearch && matchesFilter;
+    });
+  }, [records, searchQuery, filterStatus]);
+
+  const paginatedRecords = useMemo(() => {
+    const startIndex = (currentPage - 1) * itemsPerPage;
+    return filteredRecords.slice(startIndex, startIndex + itemsPerPage);
+  }, [filteredRecords, currentPage]);
+
+  const totalPages = Math.ceil(filteredRecords.length / itemsPerPage);
+
+  if (!isLoggedIn) {
+    return (
+      <div className={`min-h-screen flex items-center justify-center p-6 bg-slate-50 transition-colors duration-500 ${isDarkMode ? 'bg-slate-950' : ''}`}>
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_120%,rgba(16,185,129,0.1),transparent)] pointer-events-none"></div>
+        <Card className="w-full max-w-md p-8 bg-white/90">
+          <div className="flex justify-center mb-6">
+            <div className="w-16 h-16 bg-gradient-to-br from-slate-700 to-slate-900 rounded-2xl flex items-center justify-center shadow-2xl rotate-3">
+              <LayoutDashboard className="text-white" size={32} />
+            </div>
+          </div>
+          <h1 className="text-3xl font-bold text-center text-slate-900 mb-2">GraniteCore</h1>
+          <p className="text-slate-500 text-center mb-8">Enterprise Record Management System</p>
+          
+          <form onSubmit={handleLogin} className="space-y-4">
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-1 flex items-center gap-2">
+                <Building2 size={16} className="text-slate-400" /> Company Name
+              </label>
+              <input 
+                type="text"
+                required
+                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-slate-400 focus:outline-none transition-all"
+                placeholder="e.g. Acme Corp"
+                value={session.company}
+                onChange={(e) => setSession({...session, company: e.target.value})}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-1 flex items-center gap-2">
+                <User size={16} className="text-slate-400" /> User Name
+              </label>
+              <input 
+                type="text"
+                required
+                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-slate-400 focus:outline-none transition-all"
+                placeholder="e.g. John Doe"
+                value={session.username}
+                onChange={(e) => setSession({...session, username: e.target.value})}
+              />
+            </div>
+            <Button className="w-full py-4 text-lg mt-4" icon={ChevronRight}>
+              Enter Workspace
+            </Button>
+          </form>
+          <div className="mt-8 pt-6 border-t border-slate-100 flex justify-between items-center text-xs text-slate-400">
+            <span>Server: Cloud Global</span>
+            <span>v2.5.0-Stable</span>
+          </div>
+        </Card>
+      </div>
+    );
   }
 
   return (
-    <div className={`min-h-screen bg-slate-100 text-slate-900 font-sans transition-colors duration-300 selection:bg-emerald-200 selection:text-emerald-900 pb-20`}>
-      
-      {/* --- HEADER --- */}
-      <header className="sticky top-0 z-30 bg-white/80 backdrop-blur-md border-b border-slate-200 shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center h-16">
-            <div className="flex items-center gap-3">
-              <div className="bg-slate-800 p-2 rounded-lg text-emerald-400">
-                <Briefcase size={20} />
+    <div className={`min-h-screen flex flex-col transition-colors duration-500 ${isDarkMode ? 'bg-slate-950 text-slate-200' : 'bg-slate-50 text-slate-900'}`}>
+      <nav className={`sticky top-0 z-50 backdrop-blur-xl border-b transition-colors duration-300 ${isDarkMode ? 'bg-slate-900/80 border-slate-800' : 'bg-white/80 border-slate-200'}`}>
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className="w-10 h-10 bg-slate-800 rounded-xl flex items-center justify-center shadow-lg">
+              <LayoutDashboard className="text-white" size={20} />
+            </div>
+            <div>
+              <span className="text-xl font-bold tracking-tight">GraniteCore</span>
+              <div className="text-[10px] uppercase tracking-widest text-emerald-600 font-bold leading-none">Enterprise</div>
+            </div>
+          </div>
+
+          <div className="hidden md:flex items-center gap-6">
+            <button onClick={() => setActiveTab('dashboard')} className={`text-sm font-medium ${activeTab === 'dashboard' ? 'text-slate-900 underline underline-offset-8' : 'text-slate-500 hover:text-slate-700'}`}>Dashboard</button>
+            <button onClick={() => setActiveTab('about')} className={`text-sm font-medium ${activeTab === 'about' ? 'text-slate-900 underline underline-offset-8' : 'text-slate-500 hover:text-slate-700'}`}>About Us</button>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <button 
+              onClick={() => setIsDarkMode(!isDarkMode)}
+              className="p-2 rounded-full hover:bg-slate-100 transition-colors"
+            >
+              {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
+            </button>
+            <div className="h-6 w-[1px] bg-slate-200 mx-2 hidden sm:block"></div>
+            <div className="hidden sm:flex items-center gap-3 mr-4">
+              <div className="text-right">
+                <p className="text-xs font-bold leading-tight">{session.username}</p>
+                <p className="text-[10px] text-slate-500 uppercase">{session.company}</p>
               </div>
-              <div className="hidden md:block">
-                <h1 className="text-lg font-bold text-slate-800 leading-tight">Granite RMS</h1>
-                <p className="text-xs text-slate-500 uppercase tracking-wide font-semibold">{credentials.displayCompany}</p>
+              <div className="w-8 h-8 rounded-full bg-slate-200 border border-slate-300 flex items-center justify-center font-bold text-slate-600">
+                {session.username.charAt(0)}
               </div>
             </div>
-
-            <div className="flex items-center gap-4">
-              <button 
-                onClick={() => setIsAboutModalOpen(true)}
-                className="hidden md:flex items-center gap-2 text-sm font-medium text-slate-600 hover:text-emerald-600 transition-colors"
-              >
-                About
-              </button>
-              
-              <div className="h-6 w-px bg-slate-200 hidden md:block"></div>
-
-              <div className="flex items-center gap-3">
-                <div className="text-right hidden sm:block">
-                  <p className="text-sm font-bold text-slate-800">{credentials.displayUser}</p>
-                  <p className="text-xs text-emerald-600 font-medium">Online</p>
-                </div>
-                <div className="h-10 w-10 rounded-full bg-slate-200 flex items-center justify-center text-slate-500 border-2 border-white shadow-sm">
-                  <User size={20} />
-                </div>
-                <button 
-                  onClick={handleLogout}
-                  className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
-                  title="Logout"
-                >
-                  <LogOut size={20} />
-                </button>
-              </div>
-            </div>
+            <Button variant="ghost" onClick={handleLogout} className="p-2">
+              <LogOut size={20} />
+            </Button>
           </div>
         </div>
-      </header>
+      </nav>
 
-      {/* --- DASHBOARD CONTENT --- */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        
-        {/* Controls Bar */}
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
-          <div className="relative w-full md:w-96 group">
-            <Search className="absolute left-3 top-3 text-slate-400 group-focus-within:text-emerald-500 transition-colors" size={20} />
-            <input 
-              type="text" 
-              placeholder="Search by title or description..." 
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none shadow-sm transition-all"
-            />
+      {activeTab === 'dashboard' ? (
+        <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            <Card className="md:col-span-2 p-6 bg-gradient-to-br from-slate-800 to-slate-900 text-white relative overflow-hidden group">
+              <div className="relative z-10">
+                <h2 className="text-3xl font-bold mb-2">Welcome back, {session.username}</h2>
+                <p className="text-slate-400 max-w-md">Your workspace for <span className="text-emerald-400 font-bold">{session.company}</span> is ready. You have {records.length} total records secured in the cloud.</p>
+                <div className="mt-6 flex gap-4">
+                  <Button variant="accent" icon={Plus} onClick={() => setIsAdding(true)}>Create Record</Button>
+                </div>
+              </div>
+              <div className="absolute top-0 right-0 p-8 text-white/10 group-hover:scale-110 transition-transform duration-500">
+                <Building2 size={160} />
+              </div>
+            </Card>
+            
+            <Card className="p-6 flex flex-col justify-between">
+              <div>
+                <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
+                  <Filter size={18} className="text-slate-400" /> Quick Stats
+                </h3>
+                <div className="space-y-4">
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-500 text-sm">Completed</span>
+                    <span className="font-bold text-emerald-600">{records.filter(r => r.status === 'Completed').length}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-500 text-sm">Pending</span>
+                    <span className="font-bold text-amber-600">{records.filter(r => r.status === 'Pending').length}</span>
+                  </div>
+                </div>
+              </div>
+              <div className="pt-4 border-t border-slate-100 mt-4">
+                <div className="w-full bg-slate-100 rounded-full h-2">
+                  <div 
+                    className="bg-emerald-500 h-2 rounded-full transition-all duration-1000" 
+                    style={{ width: `${records.length > 0 ? (records.filter(r => r.status === 'Completed').length / records.length) * 100 : 0}%` }}
+                  ></div>
+                </div>
+                <p className="text-[10px] mt-2 text-slate-400 uppercase text-center font-bold">Workspace Completion Progress</p>
+              </div>
+            </Card>
           </div>
 
-          <div className="flex w-full md:w-auto gap-3">
-            <div className="flex bg-white p-1 rounded-xl border border-slate-200 shadow-sm">
-              {['All', 'Pending', 'Completed'].map(status => (
+          <div className="flex flex-col md:flex-row gap-4 mb-8">
+            <div className="flex-1 relative">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
+              <input 
+                type="text" 
+                placeholder="Search by title or description..."
+                className="w-full pl-12 pr-4 py-3 rounded-xl border border-slate-200 bg-white shadow-sm focus:ring-2 focus:ring-slate-300 focus:outline-none transition-all"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+            </div>
+            <div className="flex gap-2 overflow-x-auto pb-2 md:pb-0">
+              {['All', 'Pending', 'Completed'].map((status) => (
                 <button
                   key={status}
-                  onClick={() => setFilterStatus(status)}
-                  className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${
-                    filterStatus === status 
-                    ? 'bg-slate-800 text-white shadow-md' 
-                    : 'text-slate-600 hover:bg-slate-50'
-                  }`}
+                  onClick={() => {setFilterStatus(status); setCurrentPage(1);}}
+                  className={`px-5 py-3 rounded-xl font-medium transition-all whitespace-nowrap ${filterStatus === status ? 'bg-slate-800 text-white shadow-md' : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'}`}
                 >
                   {status}
                 </button>
               ))}
             </div>
-            
-            <button 
-              onClick={() => setIsAddModalOpen(true)}
-              className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-xl font-semibold shadow-lg shadow-emerald-200 transition-all transform hover:-translate-y-0.5 active:translate-y-0"
-            >
-              <Plus size={18} />
-              <span className="hidden sm:inline">Add Record</span>
-              <span className="sm:hidden">Add</span>
-            </button>
           </div>
-        </div>
 
-        {/* Stats Summary */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-          <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
-            <p className="text-xs text-slate-500 font-bold uppercase">Total Records</p>
-            <p className="text-2xl font-bold text-slate-800">{records.length}</p>
-          </div>
-          <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
-            <p className="text-xs text-slate-500 font-bold uppercase">Completed</p>
-            <p className="text-2xl font-bold text-emerald-600">{records.filter(r => r.status === 'Completed').length}</p>
-          </div>
-          <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
-            <p className="text-xs text-slate-500 font-bold uppercase">Pending</p>
-            <p className="text-2xl font-bold text-amber-500">{records.filter(r => r.status === 'Pending').length}</p>
-          </div>
-          <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
-             {/* Dynamic Greeting */}
-            <p className="text-xs text-slate-500 font-bold uppercase">Status</p>
-            <p className="text-2xl font-bold text-slate-800 flex items-center gap-2">
-               <span className="w-3 h-3 bg-emerald-500 rounded-full animate-pulse"></span>
-               Active
-            </p>
-          </div>
-        </div>
-
-        {/* Records Grid */}
-        {loading ? (
-          <div className="flex flex-col items-center justify-center py-20 text-slate-400">
-            <Loader2 className="animate-spin mb-4" size={40} />
-            <p className="text-sm font-medium">Syncing Secure Data...</p>
-          </div>
-        ) : filteredRecords.length === 0 ? (
-          <div className="bg-white border border-dashed border-slate-300 rounded-2xl p-12 text-center">
-            <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4 text-slate-300">
-              <List size={32} />
-            </div>
-            <h3 className="text-lg font-bold text-slate-800 mb-2">No Records Found</h3>
-            <p className="text-slate-500 max-w-sm mx-auto mb-6">There are no records matching your current filters. Add a new record to get started.</p>
-            <button 
-              onClick={() => setIsAddModalOpen(true)}
-              className="text-emerald-600 font-bold hover:text-emerald-700 hover:underline"
-            >
-              + Create New Record
-            </button>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {filteredRecords.map((record) => (
-              <div 
-                key={record.id}
-                className="bg-white rounded-2xl shadow-sm hover:shadow-xl border border-slate-200 overflow-hidden transition-all duration-300 group flex flex-col"
-              >
-                {/* Image Section */}
-                <div className="h-48 w-full bg-slate-100 relative overflow-hidden">
-                  {record.imageUrl ? (
-                    <img 
-                      src={record.imageUrl} 
-                      alt={record.title} 
-                      className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
-                    />
-                  ) : (
-                    <div className="w-full h-full flex flex-col items-center justify-center text-slate-300 bg-slate-50">
-                      <ImageIcon size={32} />
-                      <span className="text-xs font-medium mt-2 uppercase tracking-wide">No Image</span>
-                    </div>
-                  )}
-                  <div className={`absolute top-4 right-4 px-3 py-1 rounded-full text-xs font-bold shadow-sm backdrop-blur-md ${
-                    record.status === 'Completed' 
-                      ? 'bg-emerald-500/90 text-white' 
-                      : 'bg-amber-500/90 text-white'
-                  }`}>
-                    {record.status}
-                  </div>
-                </div>
-
-                {/* Content Section */}
-                <div className="p-6 flex-1 flex flex-col">
-                  <div className="flex-1">
-                    <h3 className="text-lg font-bold text-slate-800 mb-2 leading-tight group-hover:text-emerald-700 transition-colors line-clamp-1">{record.title}</h3>
-                    <p className="text-slate-500 text-sm leading-relaxed line-clamp-3 mb-4">{record.description}</p>
-                  </div>
-                  
-                  <div className="flex items-center justify-between pt-4 border-t border-slate-100 mt-2">
-                    <div className="flex items-center text-slate-400 text-xs">
-                      <Clock size={14} className="mr-1" />
-                      {formatDate(record.createdAt)}
-                    </div>
-                    <button 
-                      onClick={() => handleDelete(record.id)}
-                      className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-full transition-all opacity-0 group-hover:opacity-100 focus:opacity-100"
-                      title="Delete Record"
-                    >
-                      <Trash2 size={18} />
-                    </button>
-                  </div>
-                </div>
+          <div className="space-y-4 min-h-[400px]">
+            {loading ? (
+              <div className="flex flex-col items-center justify-center py-20 gap-4">
+                <Loader2 className="animate-spin text-slate-400" size={40} />
+                <p className="text-slate-400 font-medium">Synchronizing with Cloud...</p>
               </div>
-            ))}
+            ) : paginatedRecords.length > 0 ? (
+              paginatedRecords.map((record) => (
+                <Card key={record.id} className="group hover:shadow-2xl transition-all duration-300 transform hover:-translate-y-1">
+                  <div className="flex flex-col md:flex-row p-4 gap-6 items-start md:items-center">
+                    <div className="w-24 h-24 flex-shrink-0 bg-slate-100 rounded-xl overflow-hidden border border-slate-200 relative group-hover:rotate-1 transition-transform">
+                      {record.imageUrl ? (
+                        <img src={record.imageUrl} alt={record.title} className="w-full h-full object-cover" />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-slate-300"><ImageIcon size={32} /></div>
+                      )}
+                    </div>
+                    <div className="flex-1 space-y-2">
+                      <div className="flex items-center gap-3">
+                        <Badge status={record.status} />
+                        <h3 className="text-xl font-bold text-slate-900">{record.title}</h3>
+                      </div>
+                      <p className="text-slate-600 text-sm line-clamp-2">{record.description}</p>
+                      <div className="flex items-center gap-4 text-[10px] text-slate-400 uppercase font-bold tracking-wider">
+                        <span className="flex items-center gap-1"><Clock size={12} /> {record.createdAt?.toDate().toLocaleString() || 'Syncing...'}</span>
+                        <span className="flex items-center gap-1"><User size={12} /> {record.createdBy}</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 w-full md:w-auto md:border-l pl-0 md:pl-6 border-slate-100">
+                      <Button 
+                        variant={record.status === 'Completed' ? 'ghost' : 'accent'}
+                        className="flex-1 md:flex-none"
+                        onClick={() => toggleStatus(record.id, record.status)}
+                      >
+                        {record.status === 'Completed' ? 'Reopen' : 'Complete'}
+                      </Button>
+                      <Button variant="danger" icon={Trash2} onClick={() => deleteRecord(record.id)} className="p-2"></Button>
+                    </div>
+                  </div>
+                </Card>
+              ))
+            ) : (
+              <div className="flex flex-col items-center justify-center py-20 bg-slate-100/50 rounded-3xl border-2 border-dashed border-slate-200">
+                <div className="w-20 h-20 bg-slate-200 rounded-full flex items-center justify-center text-slate-400 mb-4">
+                  <LayoutDashboard size={40} />
+                </div>
+                <h3 className="text-xl font-bold text-slate-700">No Records Found</h3>
+                <p className="text-slate-500">Try adjusting your search or add a new record to get started.</p>
+              </div>
+            )}
           </div>
-        )}
 
-      </main>
-
-      {/* --- MODALS --- */}
-      {isAddModalOpen && (
-        <AddRecordModal 
-          onClose={() => setIsAddModalOpen(false)} 
-          onAdd={handleAddRecord}
-          loading={submitting}
-        />
+          {totalPages > 1 && (
+            <div className="mt-10 flex items-center justify-center gap-4">
+              <Button 
+                variant="secondary" 
+                disabled={currentPage === 1}
+                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+              >
+                <ChevronLeft size={18} />
+              </Button>
+              <div className="flex gap-2">
+                {[...Array(totalPages)].map((_, i) => (
+                  <button
+                    key={i}
+                    onClick={() => setCurrentPage(i + 1)}
+                    className={`w-10 h-10 rounded-lg font-bold transition-all ${currentPage === i + 1 ? 'bg-slate-800 text-white shadow-md' : 'bg-white text-slate-500 border border-slate-200 hover:bg-slate-50'}`}
+                  >
+                    {i + 1}
+                  </button>
+                ))}
+              </div>
+              <Button 
+                variant="secondary" 
+                disabled={currentPage === totalPages}
+                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+              >
+                <ChevronRight size={18} />
+              </Button>
+            </div>
+          )}
+        </main>
+      ) : (
+        <main className="flex-1 max-w-4xl mx-auto px-4 py-12 w-full">
+          <Card className="p-8 md:p-12">
+            <h1 className="text-4xl font-black text-slate-900 mb-8 border-b pb-4">About GraniteCore</h1>
+            <div className="grid md:grid-cols-2 gap-12">
+              <div className="space-y-6">
+                <section>
+                  <h3 className="text-xs font-black uppercase text-emerald-600 tracking-widest mb-2">Our Vision</h3>
+                  <p className="text-slate-600 leading-relaxed">
+                    GraniteCore is built on the principles of reliability and data integrity. In an era of ephemeral data, we provide a solid foundation for enterprise record management that persists across every device and boundary.
+                  </p>
+                </section>
+                <section>
+                  <h3 className="text-xs font-black uppercase text-emerald-600 tracking-widest mb-2">Developed By</h3>
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-center p-3 bg-slate-50 rounded-xl">
+                      <span className="font-bold text-slate-800">AMALIN</span>
+                      <span className="text-slate-500">9143036436</span>
+                    </div>
+                    <div className="flex justify-between items-center p-3 bg-slate-50 rounded-xl">
+                      <span className="font-bold text-slate-800">ANAY</span>
+                      <span className="text-slate-500">8334098932</span>
+                    </div>
+                  </div>
+                </section>
+              </div>
+              <div className="space-y-6">
+                <section>
+                  <h3 className="text-xs font-black uppercase text-emerald-600 tracking-widest mb-2">Headquarters</h3>
+                  <div className="bg-slate-900 text-slate-300 p-6 rounded-2xl shadow-xl">
+                    <p className="font-medium text-white mb-1">BIRANDINGI, KONA PURBAPARA K,</p>
+                    <p>KONA, HOWRAH – 711114</p>
+                    <p>WEST BENGAL, INDIA</p>
+                  </div>
+                </section>
+                <section className="p-6 border-2 border-emerald-100 bg-emerald-50 rounded-2xl">
+                  <h3 className="text-emerald-800 font-bold mb-1">Need Enterprise Support?</h3>
+                  <p className="text-emerald-700 text-sm">Contact our engineers for dedicated cloud solutions and on-premise deployments.</p>
+                </section>
+              </div>
+            </div>
+          </Card>
+        </main>
       )}
 
-      {isAboutModalOpen && (
-        <AboutModal onClose={() => setIsAboutModalOpen(false)} />
-      )}
-      
-      {/* Mobile About Fab */}
-      <button 
-        onClick={() => setIsAboutModalOpen(true)}
-        className="md:hidden fixed bottom-6 right-6 w-12 h-12 bg-slate-800 text-white rounded-full shadow-xl flex items-center justify-center z-40"
-      >
-        <Info size={24} />
-      </button>
+      <footer className={`py-8 px-4 border-t transition-colors ${isDarkMode ? 'bg-slate-950 border-slate-900 text-slate-500' : 'bg-white border-slate-100 text-slate-400'}`}>
+        <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4 text-xs font-medium uppercase tracking-widest">
+          <span>&copy; 2024 GraniteCore Enterprise System</span>
+          <div className="flex gap-6">
+            <span className="text-emerald-600">Secure Cloud Connection Active</span>
+            <span className="hidden md:inline">Latency: 24ms</span>
+          </div>
+        </div>
+      </footer>
 
+      {isAdding && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => !loading && setIsAdding(false)}></div>
+          <Card className="w-full max-w-lg p-8 relative animate-in fade-in zoom-in duration-300">
+            <h2 className="text-2xl font-bold mb-6 text-slate-900">New Workspace Record</h2>
+            <form onSubmit={addRecord} className="space-y-4">
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-1">Record Title</label>
+                <input 
+                  required
+                  autoFocus
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-slate-400 focus:outline-none"
+                  placeholder="Internal audit Q3..."
+                  value={newRecord.title}
+                  onChange={(e) => setNewRecord({...newRecord, title: e.target.value})}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-1">Detailed Description</label>
+                <textarea 
+                  rows={4}
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-slate-400 focus:outline-none resize-none"
+                  placeholder="Provide context for this record..."
+                  value={newRecord.description}
+                  onChange={(e) => setNewRecord({...newRecord, description: e.target.value})}
+                />
+              </div>
+              <div className="pt-4 flex gap-3">
+                <Button 
+                  className="flex-1" 
+                  disabled={loading}
+                  icon={loading ? Loader2 : CheckCircle2}
+                >
+                  {loading ? 'Processing...' : 'Sync to Cloud'}
+                </Button>
+                <Button 
+                  variant="secondary" 
+                  type="button" 
+                  onClick={() => setIsAdding(false)}
+                  disabled={loading}
+                >
+                  Cancel
+                </Button>
+              </div>
+              {imageGenerating && (
+                <p className="text-center text-xs text-slate-400 animate-pulse mt-4 flex items-center justify-center gap-2">
+                  <ImageIcon size={14} /> Generating enterprise-grade visual assets...
+                </p>
+              )}
+            </form>
+          </Card>
+        </div>
+      )}
     </div>
   );
 }
-
